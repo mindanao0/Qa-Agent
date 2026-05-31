@@ -52,8 +52,21 @@ class GeneratedTest(BaseModel):
 
 
 def _module_to_dotted(module_path: str) -> str:
-    """Convert 'src/contractskill/sfg.py' → 'src.contractskill.sfg'."""
-    return module_path.replace("\\", "/").replace("/", ".").removesuffix(".py")
+    """Convert 'src/contractskill/sfg.py' → 'src.contractskill.sfg'.
+
+    Handles both relative paths ('src/foo/bar.py') and absolute paths
+    ('D:/Code/qa-agent/src/foo/bar.py') by anchoring at the first 'src/'
+    component so that absolute paths from _PROJECT_ROOT don't produce
+    invalid dotted names like 'D:.Code.qa-agent.src.foo.bar'.
+    """
+    normalised = module_path.replace("\\", "/")
+    # If the path contains '/src/', strip everything before and including the
+    # preceding separator so we always start from 'src/'.
+    src_marker = "/src/"
+    idx = normalised.find(src_marker)
+    if idx != -1:
+        normalised = normalised[idx + 1:]  # → 'src/foo/bar.py'
+    return normalised.replace("/", ".").removesuffix(".py")
 
 
 def _get_literal_test_code(spec: "FunctionSpec") -> "str | None":
