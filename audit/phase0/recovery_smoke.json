@@ -1,0 +1,24 @@
+{
+  "measured_at_iso": "2026-05-24T04:36:56.667386+00:00",
+  "dataset_size": 3,
+  "results": [
+    {
+      "url": "https://playwright.dev/",
+      "grounder_source": "aom",
+      "estimated_tokens": 480,
+      "errors": []
+    },
+    {
+      "url": "https://demo.playwright.dev/todomvc",
+      "grounder_source": "aom",
+      "estimated_tokens": 517,
+      "errors": []
+    },
+    {
+      "url": "https://the-internet.herokuapp.com/",
+      "grounder_source": "aom",
+      "estimated_tokens": 489,
+      "errors": []
+    }
+  ]
+}

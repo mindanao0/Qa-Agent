@@ -1,0 +1,16 @@
+# CODEOWNERS — branch-protection enforced reviewers for the security
+# perimeter of the bifurcated CI/CD pipeline.
+#
+# Required by GitHub branch protection: PRs touching any of these paths must
+# be approved by at least one member of the listed team. The workflow itself
+# cannot approve its own PRs.
+
+# Both pipeline workflows + any other workflow added later
+.github/workflows/        @qa-platform-team
+
+# Security primitives — secret guard, sanitizers, XSD validator
+ci/security/              @security-team
+
+# Anything the QA agent reads as configuration / instructions
+.claude/                  @qa-platform-team
+AGENTS.md                 @qa-platform-team

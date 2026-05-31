@@ -1,0 +1,34 @@
+{
+  "measured_at_iso": "2026-05-26T15:54:37.267915+00:00",
+  "dataset_size": 10,
+  "healing_metrics": {
+    "heal_attempts_avg_per_failed_test": 0.0,
+    "heal_success_rate": 0.0,
+    "strategy_distribution": {
+      "FUZZY_HIT": 0,
+      "AOM_HIT": 0,
+      "MEMORY_HIT": 0,
+      "QUARANTINE": 0
+    },
+    "avg_heal_latency_ms": 0
+  },
+  "quality_metrics": {
+    "first_run_pass_rate": 1.0,
+    "post_healing_pass_rate": 1.0,
+    "false_pass_rate_estimated": 0.0,
+    "state_validation_error_detections": 7
+  },
+  "memory_metrics": {
+    "healed_experiences_stored": 0,
+    "post_mortems_stored": 0,
+    "memory_hits_per_session": 0.0
+  },
+  "latency_metrics": {
+    "avg_generation_ms": 76899,
+    "avg_healing_ms": 0,
+    "avg_validation_ms": 51,
+    "total_overhead_vs_sprint1_pct": -18.16
+  },
+  "dry_run": false,
+  "sprint1_baseline_avg_generation_ms": 94025
+}

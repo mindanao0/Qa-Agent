@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head><title>SVG Heavy Test</title></head>
+<body>
+  <main>
+    <h1>SVG Test Page</h1>
+    <button id="add-btn">Add Item</button>
+
+    <!-- SVG icon (common in modern UIs — causes className crash: TD-15b) -->
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+      <circle class="icon-circle" cx="12" cy="12" r="10" fill="blue"/>
+      <path class="icon-path" d="M12 6v6l4 2" stroke="white" stroke-width="2"/>
+    </svg>
+
+    <!-- SVG with aria-label and multiple classed elements -->
+    <svg xmlns="http://www.w3.org/2000/svg" aria-label="Status icon" role="img">
+      <rect class="status-bg" x="0" y="0" width="100" height="30" fill="green"/>
+      <text class="status-text" x="10" y="20" fill="white">Active</text>
+    </svg>
+
+    <!-- Nested SVG in a button (very common in icon-button patterns) -->
+    <button aria-label="Delete item">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" aria-hidden="true">
+        <line class="delete-line" x1="2" y1="2" x2="14" y2="14" stroke="red"/>
+        <line class="delete-line" x1="14" y1="2" x2="2" y2="14" stroke="red"/>
+      </svg>
+    </button>
+
+    <form>
+      <label for="name">Name</label>
+      <input type="text" id="name" name="name" placeholder="Enter your name"/>
+      <button type="submit" aria-label="Submit form">Submit</button>
+    </form>
+
+    <nav aria-label="Main navigation">
+      <a href="/home" id="home-link">Home</a>
+      <a href="/about" id="about-link">About</a>
+    </nav>
+  </main>
+</body>
+</html>

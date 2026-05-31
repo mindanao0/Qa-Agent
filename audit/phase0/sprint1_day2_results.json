@@ -1,0 +1,29 @@
+{
+  "measured_at_iso": "2026-05-23T07:16:40.070011+00:00",
+  "dataset_size": 10,
+  "instructor": {
+    "json_parse_failure_rate": 0.1,
+    "first_run_pass_rate": 0.9,
+    "avg_generation_latency_ms": 71489,
+    "avg_retry_count": 0.0,
+    "validation_errors_total": 1
+  },
+  "legacy_repair": {
+    "json_parse_failure_rate": 0.2,
+    "first_run_pass_rate": 0.8,
+    "avg_generation_latency_ms": 46993,
+    "avg_retry_count": 0.0,
+    "validation_errors_total": 2,
+    "repair_stage_hits": {
+      "stage1": 0,
+      "stage2": 0,
+      "stage3": 0
+    }
+  },
+  "delta": {
+    "json_parse_failure_rate_reduction_pct": 50.0,
+    "first_run_pass_rate_improvement_pct": 12.5,
+    "latency_change_pct": 52.13
+  },
+  "verdict": "FAIL"
+}

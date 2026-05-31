@@ -1,0 +1,94 @@
+auth:
+  endpoint: "${AUTH_BASE_URL}/api/auth/login"
+  method: "POST"
+  content_type: "application/json"
+  token_field: "access_token"
+  refresh_endpoint: "${AUTH_BASE_URL}/api/auth/refresh"
+  refresh_token_field: "refresh_token"
+  expiry_field: "expires_in"
+  expiry_buffer_sec: 60
+
+storage_state_dir: "~/.qa-agent/auth"
+
+roles:
+  admin:
+    username: "${ADMIN_USERNAME}"
+    password: "${ADMIN_PASSWORD}"
+    storage_state_path: "~/.qa-agent/auth/admin.json"
+    login_payload_template:
+      username: "${ADMIN_USERNAME}"
+      password: "${ADMIN_PASSWORD}"
+      role: "admin"
+    permissions:
+      - "employee.read"
+      - "employee.write"
+      - "employee.delete"
+      - "payroll.read"
+      - "payroll.write"
+      - "payroll.run"
+      - "reports.read"
+      - "reports.export"
+      - "rbac.manage"
+      - "system.config"
+
+  hr_manager:
+    username: "${HR_MANAGER_USERNAME}"
+    password: "${HR_MANAGER_PASSWORD}"
+    storage_state_path: "~/.qa-agent/auth/hr_manager.json"
+    login_payload_template:
+      username: "${HR_MANAGER_USERNAME}"
+      password: "${HR_MANAGER_PASSWORD}"
+      role: "hr_manager"
+    permissions:
+      - "employee.read"
+      - "employee.write"
+      - "leave.read"
+      - "leave.approve"
+      - "reports.read"
+
+  payroll_officer:
+    username: "${PAYROLL_USERNAME}"
+    password: "${PAYROLL_PASSWORD}"
+    storage_state_path: "~/.qa-agent/auth/payroll_officer.json"
+    login_payload_template:
+      username: "${PAYROLL_USERNAME}"
+      password: "${PAYROLL_PASSWORD}"
+      role: "payroll_officer"
+    permissions:
+      - "employee.read"
+      - "payroll.read"
+      - "payroll.write"
+      - "payroll.run"
+      - "tax.calculate"
+      - "reports.read"
+      - "reports.export"
+
+  employee:
+    username: "${EMPLOYEE_USERNAME}"
+    password: "${EMPLOYEE_PASSWORD}"
+    storage_state_path: "~/.qa-agent/auth/employee.json"
+    login_payload_template:
+      username: "${EMPLOYEE_USERNAME}"
+      password: "${EMPLOYEE_PASSWORD}"
+      role: "employee"
+    permissions:
+      - "profile.read"
+      - "profile.update_limited"
+      - "leave.request"
+      - "leave.read_own"
+      - "payslip.read_own"
+
+  auditor:
+    username: "${AUDITOR_USERNAME}"
+    password: "${AUDITOR_PASSWORD}"
+    storage_state_path: "~/.qa-agent/auth/auditor.json"
+    login_payload_template:
+      username: "${AUDITOR_USERNAME}"
+      password: "${AUDITOR_PASSWORD}"
+      role: "auditor"
+    permissions:
+      - "employee.read"
+      - "payroll.read"
+      - "reports.read"
+      - "reports.export"
+      - "audit_log.read"

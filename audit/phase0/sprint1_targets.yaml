@@ -1,0 +1,54 @@
+sprint_1:
+  duration_days: 10
+  _baseline_source: audit\phase0\baseline_metrics.json
+  _baseline_sample_size:
+    passing: 5
+    failing: 5
+    flaky: 0
+  _baseline_measured_at_iso: '2026-05-22T23:39:13.948489+00:00'
+  format_fix:
+    baseline_json_parse_fail_rate: 0.0
+    baseline_syntax_error_rate: 0.0
+    target_json_parse_fail_rate: 0.05
+    method: Instructor library + Pydantic V2 ConfigDict(strict=True,extra='forbid')
+      + Ollama format=json + temp=0.1 + 3-stage repair fallback (strip-fences → _repair_json
+      → schema-specific regex)
+    blocking_techdebt:
+    - TD-1
+    - TD-2
+    - TD-3
+    owner: tbd
+  dom_pruner:
+    baseline_avg_context_tokens: 16
+    target_max_context_tokens: 1000
+    method: Tree-sitter Python+HTML grammars + AOM-first (extend src/browser/ax_extractor.prune_axtree)
+      + Prune4Web heuristics (collapse decorative containers, drop aria-hidden, score-sort
+      by interactive role density)
+    blocking_techdebt:
+    - TD-4
+    owner: tbd
+  action_space:
+    baseline_invalid_action_rate: unknown
+    target_invalid_action_rate: 0.02
+    method: Closed Pydantic Union enum of allowed actions (Click | Fill | GoTo | ExpectVisible
+      | ExpectText | ExpectURL | Press | Select) + JSON schema validator on PlaywrightScript.code
+      + AST whitelist of permitted call sites (extend src/agents/generator.validate_playwright_ast)
+    blocking_techdebt:
+    - TD-5
+    owner: tbd
+  secondary_metrics_observed:
+    first_run_pass_rate: 0.5
+    locator_timeout_rate: 0.3
+    avg_test_runtime_ms: 4467.16
+    heal_success_rate: 0.0882
+    peak_vram_mb: 5354
+  acceptance_gate:
+    must_pass: all 3 targets met on full golden dataset re-run (passing.jsonl=50 +
+      failing.jsonl=50 + flaky.jsonl=20)
+    rollback_trigger: any regression > 5% on passing.jsonl OR json_parse_failure_rate
+      > baseline OR first_run_pass_rate < baseline
+    verification_steps:
+    - uv run python audit/phase0/build_golden_dataset.py --resume
+    - uv run python audit/phase0/compute_baseline.py
+    - uv run python audit/phase0/derive_sprint1_targets.py
+    - diff sprint1_targets.yaml against pre-sprint snapshot

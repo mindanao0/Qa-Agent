@@ -1,0 +1,123 @@
+# audit/phase0/sites_manifest.yaml
+# Phase 0 — Golden Dataset target sites + requirements manifest.
+# Consumed by audit/phase0/build_golden_dataset.py.
+#
+# Sites must be stable, public, and not require authentication for the
+# bulk of their flows (playwright.dev, todomvc, the-internet.herokuapp.com).
+# uitestingplayground.com is included for *intentionally broken* elements
+# that feed the failing/flaky buckets.
+
+stable_sites:
+  - url: "https://playwright.dev/"
+    role: "admin"
+    requirements:
+      - "verify the page title contains Playwright"
+      - "click the Get started link and verify the docs page loads"
+      - "verify the search button is visible in the header"
+      - "navigate to the Python language docs and verify the heading"
+      - "click on Docs link in nav and verify the URL changes"
+      - "verify the GitHub repository link is present in the footer"
+      - "click the Node.js dropdown and verify Python option appears"
+
+  - url: "https://demo.playwright.dev/todomvc"
+    role: "admin"
+    requirements:
+      - "add a new todo item titled Buy milk and verify it appears in the list"
+      - "add two todo items and verify the count shows 2 items left"
+      - "add a todo, mark it as completed, and verify it has the completed style"
+      - "add three todos, complete one, and click Clear completed to remove it"
+      - "add a todo, double-click it to edit, change the text, and press Enter to save"
+      - "verify the input placeholder text shows What needs to be done"
+      - "add five todos and use the Active filter to show only incomplete items"
+      - "add a todo, mark all complete using the toggle-all checkbox"
+
+  - url: "https://the-internet.herokuapp.com/"
+    role: "admin"
+    requirements:
+      - "click the Form Authentication link and verify the login page appears"
+      - "click the Checkboxes link and verify two checkboxes are visible"
+      - "click the Dropdown link and verify the Please select an option dropdown is present"
+      - "click the Dynamic Content link and verify content loads"
+      - "navigate to the Hovers page and verify three user images are visible"
+
+  - url: "https://the-internet.herokuapp.com/login"
+    role: "admin"
+    requirements:
+      - "enter username tomsmith and password SuperSecretPassword! then click Login and verify success message"
+      - "enter invalid username and verify the Your username is invalid error message appears"
+      - "leave both fields blank and click Login then verify an error appears"
+
+  - url: "https://the-internet.herokuapp.com/checkboxes"
+    role: "admin"
+    requirements:
+      - "check the first checkbox and verify it is checked"
+      - "uncheck the second checkbox and verify it is unchecked"
+
+  - url: "https://the-internet.herokuapp.com/dropdown"
+    role: "admin"
+    requirements:
+      - "select Option 1 from the dropdown and verify it is selected"
+      - "select Option 2 from the dropdown and verify it is selected"
+
+  - url: "https://the-internet.herokuapp.com/inputs"
+    role: "admin"
+    requirements:
+      - "type 42 into the number input and verify the value is 42"
+
+# Intentionally vague / failing prompts — these feed failing.jsonl
+vague_failing:
+  - url: "https://playwright.dev/"
+    role: "admin"
+    requirements:
+      - "test the thing"
+      - "click stuff"
+      - "do the needful"
+      - "verify something works"
+
+# Sites with known-broken or tricky elements — feed failing.jsonl + flaky.jsonl
+broken_sites:
+  - url: "https://uitestingplayground.com/textinput"
+    role: "admin"
+    requirements:
+      - "fill the input with hello world and click the button and verify the button text changes"
+      - "click the Update button without filling the input and verify default text remains"
+
+  - url: "https://uitestingplayground.com/dynamicid"
+    role: "admin"
+    requirements:
+      - "click the Button with Dynamic ID and verify no error appears"
+
+  - url: "https://uitestingplayground.com/loaddelay"
+    role: "admin"
+    requirements:
+      - "wait for the Button Appearing After Delay to appear and click it"
+
+  - url: "https://uitestingplayground.com/ajax"
+    role: "admin"
+    requirements:
+      - "click the Button Triggering AJAX Request and verify Data loaded with AJAX get request appears"
+
+  - url: "https://uitestingplayground.com/clientdelay"
+    role: "admin"
+    requirements:
+      - "click the Button Triggering Client Side Logic and verify Data calculated on the client side appears"
+
+  - url: "https://uitestingplayground.com/visibility"
+    role: "admin"
+    requirements:
+      - "click the Hide button and verify the removed button is no longer visible"
+
+# Per-run parameters
+run_config:
+  temperature: 0.1            # adapter default (no env override available without modifying src)
+  flakiness_runs: 5           # spec: pass_rate_observed = passes/5
+  max_retries: 3              # main.py --max-retries default
+  pytest_timeout_sec: 90      # per single pytest invocation
+  generate_timeout_sec: 300   # per `main.py --mode generate` call
+  request_navigation_timeout_ms: 15000
+
+# Target counts for each output bucket (spec: 50/50/20)
+targets:
+  passing: 50
+  failing: 50
+  flaky: 20

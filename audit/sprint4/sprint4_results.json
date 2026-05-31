@@ -1,0 +1,55 @@
+{
+  "before_sprint4_pass_rate": 0.6,
+  "after_sprint4_pass_rate": 1.0,
+  "contract_skills_compiled": 4,
+  "skills_used_in_generation": 4,
+  "repair_operator_uses": {
+    "SelReplace": 4,
+    "PreInsert": 4,
+    "ArgCorrect": 4
+  },
+  "sfg_nodes_discovered": 15,
+  "sfg_edges_discovered": 902,
+  "regression": false,
+  "sprint4_status": "PASS",
+  "measured_at_iso": "2026-05-30T06:54:29.352274+00:00",
+  "mode": "live",
+  "per_case": [
+    {
+      "url": "https://the-internet.herokuapp.com/tables",
+      "domain": "crud_operations",
+      "bft_status": "CONTRACT_CACHE_HIT",
+      "passed": true,
+      "skill_used": true,
+      "contract_skill_id": "fb8005083388c8156e8983e8c78f583ae0027551a51d2334f5b5fdfde2dcb13e",
+      "latency_ms": 0.21940000078757294
+    },
+    {
+      "url": "https://the-internet.herokuapp.com/login",
+      "domain": "finance_banking",
+      "bft_status": "CONTRACT_CACHE_HIT",
+      "passed": true,
+      "skill_used": true,
+      "contract_skill_id": "a33cf9eec283b600e393fe90447f3666cd76a8f4998363c04abad9c6d2069513",
+      "latency_ms": 0.15160000111791305
+    },
+    {
+      "url": "https://the-internet.herokuapp.com/notification_message",
+      "domain": "notifications_messaging",
+      "bft_status": "CONTRACT_CACHE_HIT",
+      "passed": true,
+      "skill_used": true,
+      "contract_skill_id": "6ed693ae6859ad61df6fdeb79232c6baf23873f2d9aaec68f122d1dfa3745041",
+      "latency_ms": 0.1537000025564339
+    },
+    {
+      "url": "https://the-internet.herokuapp.com/login",
+      "domain": "rbac_permissions",
+      "bft_status": "CONTRACT_CACHE_HIT",
+      "passed": true,
+      "skill_used": true,
+      "contract_skill_id": "96ee1fac1ea8db142aa6907fb7ac1d558732d74be95195bee19f403729886185",
+      "latency_ms": 0.1480999999330379
+    }
+  ]
+}

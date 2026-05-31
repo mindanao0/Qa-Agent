@@ -1,0 +1,145 @@
+# ============================================================
+# FILE: .github/workflows/02_privileged_reporting.yml
+# ============================================================
+#
+# PRIVILEGED ZONE — runs in the BASE repo context after the untrusted
+# workflow finishes. Has access to secrets and short-lived OIDC tokens.
+# Trust posture:
+#   * Triggered by `workflow_run` (NEVER `pull_request_target`).
+#   * Does NOT check out the PR head SHA. It only checks out the trusted
+#     workflow ref to get the validator/reporter source code.
+#   * Treats every byte downloaded from the artifact as untrusted:
+#     parse via defusedxml and reject DOCTYPE/external entities before
+#     anything is published to checks/PR comments.
+#   * Uses a dedicated GitHub App for write operations when configured
+#     (secrets.QA_BOT_APP_ID / QA_BOT_APP_PRIVATE_KEY); otherwise falls back
+#     to the default GITHUB_TOKEN scoped to checks:write + pull-requests:write
+#     for this workflow only.
+
+name: 02 Privileged Reporting
+
+on:
+  workflow_run:
+    workflows: ["01 Untrusted Test Execution"]
+    types: [completed]
+
+permissions:
+  checks: write
+  pull-requests: write
+  contents: read
+  id-token: write   # OIDC — required for short-lived AWS creds (no long-lived keys)
+
+concurrency:
+  group: privileged-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  parse_and_report:
+    name: Parse, validate, publish
+    runs-on: ubuntu-latest
+    # Skip when the untrusted workflow was itself cancelled — there's nothing to report.
+    if: ${{ github.event.workflow_run.conclusion != 'cancelled' }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout trusted source (workflow ref, NOT head.sha)
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          repository: ${{ github.event.workflow_run.head_repository.full_name == github.repository && github.repository || github.repository }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # v5.1.1
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9 # v4.0.2
+        with:
+          path: ~/.cache/pip
+          key: pip-ci-${{ runner.os }}-${{ hashFiles('requirements-ci.txt') }}
+
+      - name: Install CI dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-ci.txt
+
+      - name: Configure AWS credentials (OIDC, short-lived)
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-session-name: gh-actions-qa-agent-${{ github.run_id }}
+
+      - name: Download untrusted artifacts from triggering run
+        uses: dawidd6/action-download-artifact@bf251b5aa9c2f7eeb574a96ee720e24f801b7c11 # v6
+        with:
+          run_id: ${{ github.event.workflow_run.id }}
+          name: untrusted-test-results-${{ github.event.workflow_run.id }}
+          path: workspace/untrusted_reports
+          if_no_artifact_found: fail
+
+      - name: Validate JUnit XML schema (treat as UNTRUSTED)
+        run: |
+          python -m ci.validators.xml_schema_validator \
+            workspace/untrusted_reports/results.xml
+
+      - name: Publish test results to Checks API
+        uses: dorny/test-reporter@31a54ee7ebcacc03a09ea97a7e5465a47b84aea5 # v1.9.1
+        with:
+          name: E2E Tests (Untrusted)
+          path: workspace/untrusted_reports/results.xml
+          reporter: java-junit
+          fail-on-error: false
+
+      - name: Generate sanitized PR summary
+        id: summary
+        run: |
+          python - <<'PY'
+          import asyncio, json, os
+          from pathlib import Path
+          from ci.runners.privileged_reporter import PrivilegedReporter
+
+          async def _main() -> int:
+              reporter = PrivilegedReporter()
+              report = await reporter.parse_junit_xml(Path("workspace/untrusted_reports/results.xml"))
+              summary = reporter.to_summary_json(report)
+              Path("workspace/untrusted_reports/summary.json").write_text(summary, encoding="utf-8")
+              gh_out = os.environ.get("GITHUB_OUTPUT")
+              if gh_out:
+                  with open(gh_out, "a", encoding="utf-8") as fh:
+                      fh.write("summary_path=workspace/untrusted_reports/summary.json\n")
+              return 0
+
+          raise SystemExit(asyncio.run(_main()))
+          PY
+
+      - name: Comment summary on PR
+        if: ${{ github.event.workflow_run.pull_requests[0].number != null }}
+        env:
+          GH_TOKEN: ${{ secrets.QA_BOT_APP_TOKEN != '' && secrets.QA_BOT_APP_TOKEN || secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+        run: |
+          # Pass the sanitized JSON summary via stdin to gh — never via shell interpolation.
+          gh pr comment "$PR_NUMBER" --body-file workspace/untrusted_reports/summary.json
+
+      - name: Enforce quality gate
+        run: |
+          python - <<'PY'
+          import asyncio, sys
+          from pathlib import Path
+          from ci.runners.privileged_reporter import PrivilegedReporter, QualityGateError
+
+          async def _main() -> int:
+              reporter = PrivilegedReporter()
+              report = await reporter.parse_junit_xml(Path("workspace/untrusted_reports/results.xml"))
+              try:
+                  await reporter.enforce_quality_gate(report)
+              except QualityGateError as exc:
+                  print(f"::error::{exc}", file=sys.stderr)
+                  return 1
+              return 0
+
+          raise SystemExit(asyncio.run(_main()))
+          PY

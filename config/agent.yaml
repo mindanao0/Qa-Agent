@@ -1,0 +1,120 @@
+llm:
+  model: "qwen2.5-coder:7b-instruct-q4_K_M"
+  embedding_model: "nomic-embed-text"
+  base_url: "http://localhost:11434"
+  temperature: 0.1
+  max_tokens: 4096
+  semaphore_limit: 2
+  vram_buffer_mb: 100
+  request_timeout_sec: 120
+  retry_attempts: 3
+  retry_min_wait_sec: 2
+  retry_max_wait_sec: 10
+  structured_output_engine: "instructor"   # "instructor" | "legacy_repair"
+  bft:
+    enabled: false
+    deferred_reason: "7B model + max_retries=1 → T>0 generators fail schema"
+    reactivate_when: "model upgrade to >=14B or VRAM >= 12GB"
+    confidence_routing: true   # adaptive skip/lite/full
+
+browser:
+  headless: true
+  timeout_ms: 15000
+  max_contexts: 3
+  launch_args:
+    - "--disable-dev-shm-usage"
+    - "--no-sandbox"
+    - "--disable-gpu"
+    - "--disable-background-networking"
+    - "--disable-default-apps"
+    - "--disable-extensions"
+  blocked_resources:
+    - "image"
+    - "media"
+    - "font"
+    - "stylesheet"
+  allowed_resources:
+    - "document"
+    - "script"
+    - "xhr"
+    - "fetch"
+    - "websocket"
+
+healing:
+  fuzzy_threshold: 0.85
+  ai_threshold: 0.5
+  vlm_threshold: 0.4
+  max_retries: 3
+  locator_file: "locators/locators.json"
+  log_axtree_diff: true
+
+rag:
+  vector_db_path: "~/.qa-agent/vector_db"
+  top_k: 5
+  semantic_weight: 0.7
+  bm25_weight: 0.3
+  max_context_tokens: 2000
+  chunk_size: 512
+  chunk_overlap: 64
+
+axtree:
+  max_nodes: 200
+  semantic_density_threshold: 0.4
+  max_tokens_warning: 4000
+
+reporting:
+  allure_results_dir: "allure-results"
+  attach_axtree: true
+  attach_screenshots: true
+  attach_reasoning: true
+
+sessions:
+  state_dir: "~/.qa-agent/sessions"
+  datasets_dir: "~/.qa-agent/datasets"
+  checkpoints_dir: "~/.qa-agent/checkpoints"
+
+synthetic_data:
+  target_examples: 500
+  happy_path_per_domain: 10
+  negative_per_domain: 5
+  rbac_per_domain: 3
+  output_file: "~/.qa-agent/datasets/synthetic.jsonl"
+
+domains:
+  auto_detect: true                       # use LLM to detect domain from requirement+url
+  fallback_domain: "crud_operations"      # used when detection confidence is low
+  enabled_domains:                        # list of domains active for dataset generation
+    - authentication
+    - crud_operations
+    - forms_validation
+    - rbac_permissions
+    - ecommerce
+    - finance_banking
+    - healthcare
+    - hrm_payroll
+    - erp_crm
+    - cms_content
+    - dashboard_analytics
+    - notifications_messaging
+    - settings_configuration
+
+dataset:
+  output_path: "~/.qa-agent/datasets/synthetic_universal.jsonl"
+  examples_per_domain_happy: 8
+  examples_per_domain_edge: 4
+  examples_per_domain_rbac: 3
+
+perception:
+  use_grounder: true    # Re-enabled after TD-15a/15b fixes (Sprint 1 Recovery 2026-05-24)
+  context_budget_tokens: 1000
+  fallback_to_legacy_extraction: true
+  prune_score_threshold: 5
+  max_cluster_items: 25
+  output_format: "md"
+
+exploration:
+  max_time_minutes: 10
+  max_tokens: 200000
+  max_pages: 20
+  max_depth: 4
+  max_outgoing_per_node: 10

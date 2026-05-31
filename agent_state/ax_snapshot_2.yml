@@ -1,0 +1,114 @@
+- banner:
+  - link "Homepage":
+    - /url: /
+    - img "Homepage"
+  - list:
+    - listitem:
+      - link "Domains":
+        - /url: /domains
+    - listitem:
+      - link "Protocols":
+        - /url: /protocols
+    - listitem:
+      - link "Numbers":
+        - /url: /numbers
+    - listitem:
+      - link "About":
+        - /url: /about
+- article:
+  - main:
+    - heading "Example Domains" [level=1]
+    - paragraph:
+      - text: As described in
+      - link "RFC 2606":
+        - /url: /go/rfc2606
+      - text: and
+      - link "RFC 6761":
+        - /url: /go/rfc6761
+      - text: ", a number of domains such as example.com and example.org are maintained for documentation purposes. These domains may be used as illustrative examples in documents without prior coordination with us. They are not available for registration or transfer."
+    - paragraph: We provide a web service on the example domain hosts to provide basic information on the purpose of the domain. These web services are provided as best effort, but are not designed to support production applications. While incidental traffic for incorrectly configured applications is expected, please do not design applications that require the example domains to have operating HTTP service.
+    - heading "Further Reading" [level=2]
+    - list:
+      - listitem:
+        - link "IANA-managed Reserved Domains":
+          - /url: /domains/reserved
+    - text: Last revised 2017-05-13.
+  - navigation
+- contentinfo:
+  - table:
+    - rowgroup:
+      - row "Domain Names Root Zone Registry .INT Registry .ARPA Registry IDN Repository":
+        - cell "Domain Names":
+          - link "Domain Names":
+            - /url: /domains
+        - cell "Root Zone Registry .INT Registry .ARPA Registry IDN Repository":
+          - list:
+            - listitem:
+              - link "Root Zone Registry":
+                - /url: /domains/root
+            - listitem:
+              - link ".INT Registry":
+                - /url: /domains/int
+            - listitem:
+              - link ".ARPA Registry":
+                - /url: /domains/arpa
+            - listitem:
+              - link "IDN Repository":
+                - /url: /domains/idn-tables
+      - row "Number Resources Abuse Information":
+        - cell "Number Resources":
+          - link "Number Resources":
+            - /url: /numbers
+        - cell "Abuse Information":
+          - list:
+            - listitem:
+              - link "Abuse Information":
+                - /url: /abuse
+      - row "Protocols Protocol Registries Time Zone Database":
+        - cell "Protocols":
+          - link "Protocols":
+            - /url: /protocols
+        - cell "Protocol Registries Time Zone Database":
+          - list:
+            - listitem:
+              - link "Protocol Registries":
+                - /url: /protocols
+            - listitem:
+              - link "Time Zone Database":
+                - /url: /time-zones
+      - row "About Us News Performance Excellence Archive Contact Us":
+        - cell "About Us":
+          - link "About Us":
+            - /url: /about
+        - cell "News Performance Excellence Archive Contact Us":
+          - list:
+            - listitem:
+              - link "News":
+                - /url: /news
+            - listitem:
+              - link "Performance":
+                - /url: /performance
+            - listitem:
+              - link "Excellence":
+                - /url: /about/excellence
+            - listitem:
+              - link "Archive":
+                - /url: /archive
+            - listitem:
+              - link "Contact Us":
+                - /url: /contact
+  - paragraph:
+    - text: The IANA functions coordinate the Internet’s globally unique identifiers, and are provided by
+    - link "Public Technical Identifiers":
+      - /url: https://pti.icann.org
+    - text: ", an affiliate of"
+    - link "ICANN":
+      - /url: https://www.icann.org/
+    - text: .
+  - list:
+    - listitem:
+      - link "Privacy Policy":
+        - /url: https://www.icann.org/privacy/policy
+    - listitem:
+      - link "Terms of Service":
+        - /url: https://www.icann.org/privacy/tos

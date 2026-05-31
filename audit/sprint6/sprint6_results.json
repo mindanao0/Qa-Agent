@@ -1,0 +1,129 @@
+{
+  "ast_functions_parsed": 17,
+  "tests_generated": 17,
+  "test_pass_rate": 1.0,
+  "metamorphic_pairs": 11,
+  "regression": false,
+  "sprint6_status": "PASS",
+  "test_details": [
+    {
+      "test_id": "test_is_safe_action",
+      "func_id": "43520be660",
+      "module_path": "src\\contractskill\\sfg.py",
+      "passed": true,
+      "error_output": null
+    },
+    {
+      "test_id": "test_upsert_node",
+      "func_id": "fc32a073bf",
+      "module_path": "src\\contractskill\\sfg.py",
+      "passed": true,
+      "error_output": null
+    },
+    {
+      "test_id": "test_upsert_edge",
+      "func_id": "dd423f99c7",
+      "module_path": "src\\contractskill\\sfg.py",
+      "passed": true,
+      "error_output": null
+    },
+    {
+      "test_id": "test_get_node",
+      "func_id": "3788807ddf",
+      "module_path": "src\\contractskill\\sfg.py",
+      "passed": true,
+      "error_output": null
+    },
+    {
+      "test_id": "test_get_edges_from",
+      "func_id": "0ba1eb73cc",
+      "module_path": "src\\contractskill\\sfg.py",
+      "passed": true,
+      "error_output": null
+    },
+    {
+      "test_id": "test_find_path",
+      "func_id": "3aafaf8f69",
+      "module_path": "src\\contractskill\\sfg.py",
+      "passed": true,
+      "error_output": null
+    },
+    {
+      "test_id": "test_node_count",
+      "func_id": "8f81621d45",
+      "module_path": "src\\contractskill\\sfg.py",
+      "passed": true,
+      "error_output": null
+    },
+    {
+      "test_id": "test_edge_count",
+      "func_id": "221700d0cc",
+      "module_path": "src\\contractskill\\sfg.py",
+      "passed": true,
+      "error_output": null
+    },
+    {
+      "test_id": "test_get_nodes_by_url_prefix",
+      "func_id": "17d8666a58",
+      "module_path": "src\\contractskill\\sfg.py",
+      "passed": true,
+      "error_output": null
+    },
+    {
+      "test_id": "test_crawl",
+      "func_id": "65119be471",
+      "module_path": "src\\contractskill\\crawler.py",
+      "passed": true,
+      "error_output": null
+    },
+    {
+      "test_id": "test_compile",
+      "func_id": "5ce28cec61",
+      "module_path": "src\\contractskill\\compiler.py",
+      "passed": true,
+      "error_output": null
+    },
+    {
+      "test_id": "test_connect",
+      "func_id": "5434e4cd53",
+      "module_path": "src\\contractskill\\compiler.py",
+      "passed": true,
+      "error_output": null
+    },
+    {
+      "test_id": "test_close",
+      "func_id": "d91b981ef2",
+      "module_path": "src\\contractskill\\compiler.py",
+      "passed": true,
+      "error_output": null
+    },
+    {
+      "test_id": "test_store",
+      "func_id": "246f09806c",
+      "module_path": "src\\contractskill\\compiler.py",
+      "passed": true,
+      "error_output": null
+    },
+    {
+      "test_id": "test_update_counts",
+      "func_id": "970d5dee42",
+      "module_path": "src\\contractskill\\compiler.py",
+      "passed": true,
+      "error_output": null
+    },
+    {
+      "test_id": "test_find_matching_skill",
+      "func_id": "7bc5af466b",
+      "module_path": "src\\contractskill\\compiler.py",
+      "passed": true,
+      "error_output": null
+    },
+    {
+      "test_id": "test_repair",
+      "func_id": "00e2ed787a",
+      "module_path": "src\\contractskill\\repair.py",
+      "passed": true,
+      "error_output": null
+    }
+  ]
+}

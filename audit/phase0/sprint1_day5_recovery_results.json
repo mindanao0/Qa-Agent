@@ -1,0 +1,31 @@
+{
+  "measured_at_iso": "2026-05-24T05:06:08.635051+00:00",
+  "dataset_size": 10,
+  "note": "Live measurement with Ollama and Playwright.",
+  "with_grounder": {
+    "avg_context_tokens": 488,
+    "p95_context_tokens": 517,
+    "json_parse_failure_rate": 0.0,
+    "first_run_pass_rate": 1.0,
+    "avg_generation_latency_ms": 94025,
+    "p95_generation_latency_ms": 186454,
+    "grounder_source_distribution": {
+      "aom": 10,
+      "dom": 0,
+      "hybrid": 0
+    },
+    "budget_overflow_count": 0
+  },
+  "without_grounder": {
+    "avg_context_tokens": 750,
+    "json_parse_failure_rate": 0.0,
+    "first_run_pass_rate": 1.0,
+    "avg_generation_latency_ms": 73083
+  },
+  "delta": {
+    "context_tokens_reduction_pct": 34.84,
+    "latency_change_pct": 28.65,
+    "pass_rate_change_pct": 0.0
+  },
+  "verdict": "PASS \u2014 context_tokens_reduction \u2705; pass_rate_no_regression \u2705"
+}

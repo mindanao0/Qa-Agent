@@ -1,0 +1,84 @@
+# ============================================================
+# FILE: .github/workflows/01_untrusted_test_execution.yml
+# ============================================================
+#
+# UNTRUSTED ZONE — runs in the PR's read-only fork context.
+# Posture:
+#   * NO repository secrets are passed in.
+#   * GITHUB_TOKEN is the auto-issued read-only token (never exported to env).
+#   * Triggered only by `pull_request` (NEVER `pull_request_target`).
+#   * Action versions are pinned to immutable commit SHAs (not floating tags).
+#   * The runner step is wrapped by ci/security/secret_guard.py — it self-exits
+#     with code 126 if any forbidden env var (KEY/SECRET/TOKEN/PASSWORD/...) is
+#     present in the process environment.
+
+name: 01 Untrusted Test Execution
+
+on:
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+  checks: read
+
+concurrency:
+  group: untrusted-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  run_tests:
+    name: Run E2E (untrusted, zero-secret)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Explicitly the only env var injected by us. NO secrets here.
+      TEST_ENV: staging
+    steps:
+      - name: Checkout (base SHA — never head.sha)
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          # `github.sha` on a pull_request event is the test-merge commit on
+          # the base repo, NOT the PR head. Code on the head ref still flows
+          # through the merge, but secrets remain out of reach.
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # v5.1.1
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9 # v4.0.2
+        with:
+          path: ~/.cache/pip
+          key: pip-ci-${{ runner.os }}-${{ hashFiles('requirements-ci.txt') }}
+          restore-keys: |
+            pip-ci-${{ runner.os }}-
+
+      - name: Install CI dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-ci.txt
+
+      - name: Install Playwright (chromium only)
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run untrusted test runner
+        # No `|| true`. Pytest's structured exit code is propagated verbatim
+        # by ci/runners/untrusted_runner.py via sys.exit(returncode).
+        run: python ci/runners/untrusted_runner.py
+        env:
+          TEST_ENV: staging
+          PYTHONUNBUFFERED: "1"
+
+      - name: Upload untrusted artifacts
+        if: always()
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+        with:
+          name: untrusted-test-results-${{ github.run_id }}
+          path: workspace/untrusted_reports/
+          retention-days: 3
+          if-no-files-found: warn

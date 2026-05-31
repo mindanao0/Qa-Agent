@@ -1,0 +1,14 @@
+# CI-only dependencies — no LLM / GPU packages.
+# Pinned to compatible-release ranges per spec; lock files
+# (pip-compile / uv lock) should narrow to exact pins downstream.
+pytest>=8.3,<8.4
+pytest-asyncio>=0.24,<0.25
+pytest-xdist>=3.6,<3.7
+pytest-timeout>=2.3,<2.4
+playwright>=1.44,<1.45
+pydantic>=2.7,<2.8
+defusedxml>=0.7,<0.8
+lxml>=5.2,<5.3
+anyio>=4.4,<4.5
+python-dotenv>=1.0,<1.1
+jellyfish>=1.0,<1.1

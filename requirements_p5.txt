@@ -1,0 +1,9 @@
+# Priority 5 — Observer-Driver multi-agent system
+# Pin versions per docs/specs/Priority 5 Observer-Driver.md
+langgraph>=0.2.0
+langchain-core>=0.2.0
+playwright>=1.44.0
+pydantic>=2.7.0
+pytest-asyncio>=0.23.0
+aiohttp>=3.9.0
+pyyaml>=6.0.1
