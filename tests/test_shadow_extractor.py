@@ -155,6 +155,20 @@ async def test_extract_detaches_cdp_session():
     client.detach.assert_called_once()
 
 
+@pytest.mark.asyncio
+async def test_extract_detaches_cdp_session_on_error():
+    page = MagicMock()
+    client = AsyncMock()
+    page.context.new_cdp_session = AsyncMock(return_value=client)
+    client.send.side_effect = RuntimeError("CDP error")
+
+    extractor = ShadowDOMExtractor()
+    with pytest.raises(RuntimeError):
+        await extractor.extract(page)
+
+    client.detach.assert_called_once()
+
+
 # ──────────────── merge_into_ax() ────────────────
 
 

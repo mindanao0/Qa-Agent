@@ -56,9 +56,9 @@ class ShadowDOMExtractor:
                 ShadowNode(
                     node_id=str(node["nodeId"]),
                     host_role=host_role,
-                    shadow_mode="open" if shadow_root_type in ("open", "user-agent") else "closed",
+                    shadow_mode="open" if shadow_root_type in ("open", "user-agent") else "closed",  # user-agent shadows are treated as open for downstream consumers
                     children=children,
-                    ax_label=None,
+                    ax_label=None,  # populated by external callers; extract() returns structural CDP data only
                 )
             )
 
@@ -69,6 +69,11 @@ class ShadowDOMExtractor:
         ax_nodes: list[dict],
         shadow_nodes: list[ShadowNode],
     ) -> list[dict]:
+        """Inject shadow ax_labels into AX tree nodes by matching host_role to node role.
+
+        No-op when ax_label is None on all shadow nodes (the normal path from extract()).
+        # last ShadowNode with a given host_role wins if duplicates exist
+        """
         role_to_label: dict[str, str] = {
             sn.host_role: sn.ax_label
             for sn in shadow_nodes
