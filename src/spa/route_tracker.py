@@ -24,12 +24,14 @@ class SPARouteTracker:
             """
             () => {
                 window.__spa_route_events__ = [];
+                window.__spa_prev_url__ = location.href;
                 const _push = history.pushState.bind(history);
                 const _replace = history.replaceState.bind(history);
 
                 history.pushState = function(state, title, url) {
-                    const from = location.href;
+                    const from = window.__spa_prev_url__ || location.href;
                     _push(state, title, url);
+                    window.__spa_prev_url__ = location.href;
                     window.__spa_route_events__.push({
                         from_url: from,
                         to_url: location.href,
@@ -39,8 +41,9 @@ class SPARouteTracker:
                 };
 
                 history.replaceState = function(state, title, url) {
-                    const from = location.href;
+                    const from = window.__spa_prev_url__ || location.href;
                     _replace(state, title, url);
+                    window.__spa_prev_url__ = location.href;
                     window.__spa_route_events__.push({
                         from_url: from,
                         to_url: location.href,
@@ -56,11 +59,14 @@ class SPARouteTracker:
                         trigger: 'hashchange',
                         timestamp: Date.now() / 1000
                     });
+                    window.__spa_prev_url__ = e.newURL;
                 });
 
                 window.addEventListener('popstate', () => {
+                    const from = window.__spa_prev_url__ || location.href;
+                    window.__spa_prev_url__ = location.href;
                     window.__spa_route_events__.push({
-                        from_url: document.referrer || location.href,
+                        from_url: from,
                         to_url: location.href,
                         trigger: 'popstate',
                         timestamp: Date.now() / 1000

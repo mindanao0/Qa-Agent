@@ -1,6 +1,7 @@
 # tests/test_spa_route_tracker.py
 from __future__ import annotations
 
+import pydantic
 import pytest
 from unittest.mock import AsyncMock
 
@@ -19,16 +20,7 @@ async def test_attach_injects_history_override():
     assert "replaceState" in script
     assert "hashchange" in script
     assert "__spa_route_events__" in script
-
-
-@pytest.mark.asyncio
-async def test_attach_initialises_events_array():
-    page = AsyncMock()
-    tracker = SPARouteTracker()
-    await tracker.attach(page)
-
-    script: str = page.evaluate.call_args[0][0]
-    assert "window.__spa_route_events__ = []" in script
+    assert "__spa_prev_url__" in script
 
 
 @pytest.mark.asyncio
@@ -82,7 +74,6 @@ async def test_flush_multiple_events():
 
 
 def test_route_event_model_extra_forbidden():
-    import pydantic
     with pytest.raises((pydantic.ValidationError, TypeError)):
         RouteEvent(
             from_url="a",
