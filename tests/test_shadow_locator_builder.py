@@ -19,18 +19,18 @@ def test_build_rejects_absolute_xpath():
         build("host", "/html/body/button")
 
 
-def test_build_rejects_rooted_xpath_with_dot():
-    # "/button" starts with "/" — also an absolute XPath
+def test_build_rejects_slash_prefix_inner():
+    # "/button" starts with "/" — absolute XPath
     with pytest.raises(ValueError, match="absolute XPath"):
         build("host", "/button")
 
 
-def test_build_chain_two_levels():
+def test_build_chain_three_segments():
     result = build_chain(["my-host", "div.slot", "button"])
     assert result == "my-host >> css=div.slot >> css=button"
 
 
-def test_build_chain_three_levels():
+def test_build_chain_four_segments():
     result = build_chain(["outer-elem", "inner-elem", "span", "a"])
     assert result == "outer-elem >> css=inner-elem >> css=span >> css=a"
 
