@@ -30,6 +30,7 @@ import datetime
 import hashlib
 from typing import Any, TypedDict
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from loguru import logger
 
@@ -43,8 +44,16 @@ from src.shadow.extractor import ShadowDOMExtractor
 from src.spa.hydration_guard import HydrationGuard
 from src.spa.route_tracker import RouteEvent, SPARouteTracker
 
-# Semaphore(1) serialises Ollama calls from this agent
-_SPA_GENERATE_SEM = asyncio.Semaphore(1)
+# Semaphore(1) serialises Ollama calls from this agent — created lazily so it
+# binds to the running event loop rather than the import-time loop.
+_SPA_GENERATE_SEM: asyncio.Semaphore | None = None
+
+
+def _get_sem() -> asyncio.Semaphore:
+    global _SPA_GENERATE_SEM
+    if _SPA_GENERATE_SEM is None:
+        _SPA_GENERATE_SEM = asyncio.Semaphore(1)
+    return _SPA_GENERATE_SEM
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -70,15 +79,15 @@ class SPAAgentState(TypedDict):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _page(config: dict) -> Any:
+def _page(config: RunnableConfig) -> Any:
     return config["configurable"]["page"]
 
 
-def _sfg_store(config: dict) -> SFGStore:
+def _sfg_store(config: RunnableConfig) -> SFGStore:
     return config["configurable"]["sfg_store"]
 
 
-def _instructor(config: dict) -> InstructorClient:
+def _instructor(config: RunnableConfig) -> InstructorClient:
     client = config["configurable"].get("instructor")
     if client is None:
         client = InstructorClient()
@@ -90,7 +99,7 @@ def _instructor(config: dict) -> InstructorClient:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-async def attach_trackers(state: SPAAgentState, config: dict) -> dict:
+async def attach_trackers(state: SPAAgentState, config: RunnableConfig) -> dict:
     page = _page(config)
     guard = HydrationGuard()
     tracker = SPARouteTracker()
@@ -101,7 +110,7 @@ async def attach_trackers(state: SPAAgentState, config: dict) -> dict:
     return {}
 
 
-async def navigate(state: SPAAgentState, config: dict) -> dict:
+async def navigate(state: SPAAgentState, config: RunnableConfig) -> dict:
     page = _page(config)
     guard: HydrationGuard = config["configurable"]["_guard"]
     await page.goto(state["url"])
@@ -110,7 +119,7 @@ async def navigate(state: SPAAgentState, config: dict) -> dict:
     return {}
 
 
-async def extract_ax(state: SPAAgentState, config: dict) -> dict:
+async def extract_ax(state: SPAAgentState, config: RunnableConfig) -> dict:
     page = _page(config)
     aom = AOMExtractor()
     shadow_ext = ShadowDOMExtractor()
@@ -132,14 +141,14 @@ async def extract_ax(state: SPAAgentState, config: dict) -> dict:
     }
 
 
-async def ground(state: SPAAgentState, config: dict) -> dict:
+async def ground(state: SPAAgentState, config: RunnableConfig) -> dict:
     page = _page(config)
     grounder = Grounder()
     compact_pam = await grounder.ground(page)
     return {"compact_pam_text": str(compact_pam)}
 
 
-async def generate_test(state: SPAAgentState, config: dict) -> dict:
+async def generate_test(state: SPAAgentState, config: RunnableConfig) -> dict:
     instructor = _instructor(config)
     pam = state.get("compact_pam_text", "")
     url = state.get("url", "")
@@ -157,7 +166,7 @@ async def generate_test(state: SPAAgentState, config: dict) -> dict:
 
     func_id = hashlib.md5(url.encode()).hexdigest()[:8]
 
-    async with _SPA_GENERATE_SEM:
+    async with _get_sem():
         try:
             result: GeneratedTest = await instructor.create_structured(
                 prompt=prompt,
@@ -181,7 +190,7 @@ async def generate_test(state: SPAAgentState, config: dict) -> dict:
     return {"generated_test_code": result.test_code}
 
 
-async def judge(state: SPAAgentState, config: dict) -> dict:
+async def judge(state: SPAAgentState, config: RunnableConfig) -> dict:
     code = state.get("generated_test_code", "")
     url = state.get("url", "")
     func_id = hashlib.md5(url.encode()).hexdigest()[:8]
@@ -194,10 +203,14 @@ async def judge(state: SPAAgentState, config: dict) -> dict:
         metamorphic_relation=None,
     )
     judge_obj = CodeJudge()
+    result: JudgeResult | None = None
     try:
-        result: JudgeResult = await judge_obj.judge(generated)
+        result = await judge_obj.judge(generated)
     finally:
         await judge_obj.close()
+
+    if result is None:
+        raise RuntimeError("CodeJudge.judge() did not return a result")
 
     return {
         "judge_grade": result.grade,
@@ -206,15 +219,18 @@ async def judge(state: SPAAgentState, config: dict) -> dict:
     }
 
 
-async def flush_routes(state: SPAAgentState, config: dict) -> dict:
+async def flush_routes(state: SPAAgentState, config: RunnableConfig) -> dict:
     page = _page(config)
-    tracker: SPARouteTracker = config["configurable"].get("_tracker", SPARouteTracker())
+    tracker: SPARouteTracker | None = config["configurable"].get("_tracker")
+    if tracker is None:
+        logger.warning("SPAAgent.flush_routes: _tracker not found in config, creating fresh (events will be empty)")
+        tracker = SPARouteTracker()
     events = await tracker.flush(page)
     logger.debug(f"SPAAgent: flushed {len(events)} route events")
     return {"route_events": [e.model_dump() for e in events]}
 
 
-async def store_sfg(state: SPAAgentState, config: dict) -> dict:
+async def store_sfg(state: SPAAgentState, config: RunnableConfig) -> dict:
     page = _page(config)
     store = _sfg_store(config)
 
@@ -237,7 +253,7 @@ async def store_sfg(state: SPAAgentState, config: dict) -> dict:
         pam_content=pam_text[:2000],
         coverage_tags=[],
         outgoing_edges=[],
-        discovered_at_iso=datetime.datetime.utcnow().isoformat(),
+        discovered_at_iso=datetime.datetime.now(datetime.timezone.utc).isoformat(),
         visit_count=1,
     )
     store.upsert_node(node)
