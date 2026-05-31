@@ -34,11 +34,12 @@ class HydrationGuard:
             client.on("Network.loadingFinished", _on_done)
             client.on("Network.loadingFailed", _on_done)
 
-            deadline = asyncio.get_event_loop().time() + timeout_ms / 1000
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + timeout_ms / 1000
             idle_since: float | None = None
 
             # Wait for document.readyState == "complete" first
-            while asyncio.get_event_loop().time() < deadline:
+            while loop.time() < deadline:
                 try:
                     state = await page.evaluate("document.readyState")
                 except Exception:
@@ -48,12 +49,12 @@ class HydrationGuard:
                 await asyncio.sleep(0.05)
 
             # Wait for network idle (500 ms of no pending requests)
-            while asyncio.get_event_loop().time() < deadline:
+            while loop.time() < deadline:
                 await asyncio.sleep(0.05)
                 if not pending_ids:
                     if idle_since is None:
-                        idle_since = asyncio.get_event_loop().time()
-                    elif asyncio.get_event_loop().time() - idle_since >= 0.5:
+                        idle_since = loop.time()
+                    elif loop.time() - idle_since >= 0.5:
                         break
                 else:
                     idle_since = None

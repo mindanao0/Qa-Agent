@@ -60,6 +60,7 @@ async def test_wait_stable_completes_when_page_ready():
     """wait_stable should complete without raising when page is already complete."""
     page = MagicMock()
     client = AsyncMock()
+    client.on = MagicMock()  # on() is synchronous in real Playwright
     page.context.new_cdp_session = AsyncMock(return_value=client)
 
     # evaluate: first call → readyState "complete"; second call → framework "unknown"
@@ -74,6 +75,7 @@ async def test_wait_stable_completes_when_page_ready():
 async def test_wait_stable_enables_cdp_network():
     page = MagicMock()
     client = AsyncMock()
+    client.on = MagicMock()  # on() is synchronous in real Playwright
     page.context.new_cdp_session = AsyncMock(return_value=client)
     page.evaluate = AsyncMock(side_effect=["complete", "unknown"])
 
@@ -87,6 +89,7 @@ async def test_wait_stable_enables_cdp_network():
 async def test_wait_stable_detaches_cdp_session():
     page = MagicMock()
     client = AsyncMock()
+    client.on = MagicMock()  # on() is synchronous in real Playwright
     page.context.new_cdp_session = AsyncMock(return_value=client)
     page.evaluate = AsyncMock(side_effect=["complete", "unknown"])
 
