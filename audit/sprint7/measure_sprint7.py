@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import datetime
-import hashlib
 import json
 import pathlib
 import sys
@@ -42,12 +41,13 @@ from src.spa.route_tracker import SPARouteTracker
 _SPA_URL = "https://demo.playwright.dev/todomvc/#/"
 _SHADOW_URL = "https://the-internet.herokuapp.com/shadowdom"
 _OUTPUT_PATH = pathlib.Path(__file__).parent / "sprint7_results.json"
+_PROJECT_ROOT = pathlib.Path(__file__).parent.parent.parent
 
 _TARGET_MODULES = [
-    pathlib.Path("src/shadow/locator_builder.py"),
-    pathlib.Path("src/shadow/extractor.py"),
-    pathlib.Path("src/spa/route_tracker.py"),
-    pathlib.Path("src/spa/hydration_guard.py"),
+    _PROJECT_ROOT / "src/shadow/locator_builder.py",
+    _PROJECT_ROOT / "src/shadow/extractor.py",
+    _PROJECT_ROOT / "src/spa/route_tracker.py",
+    _PROJECT_ROOT / "src/spa/hydration_guard.py",
 ]
 
 _GATE_SHADOW_ELEMENTS = 5
@@ -178,7 +178,7 @@ async def _measure_test_pass_rate() -> float:
 
 async def _measure_self_heal(page) -> int:
     """Invoke RepairEngine on a broken locator and return 1 if call succeeded."""
-    sfg_store = SFGStore(pathlib.Path("audit/sprint7/sprint7_sfg.db"))
+    sfg_store = SFGStore(_PROJECT_ROOT / "audit/sprint7/sprint7_sfg.db")
     instructor = InstructorClient()
     engine = RepairEngine(instructor_client=instructor, sfg_store=sfg_store)
 
@@ -209,11 +209,14 @@ async def _measure_self_heal(page) -> int:
         triggered = 1
         logger.info("measure_sprint7: RepairEngine.repair() completed")
     except Exception as exc:
-        # Any exception means repair was attempted — counts as triggered
+        # engine.repair() was called and raised — counts as triggered
         triggered = 1
         logger.info(f"measure_sprint7: RepairEngine.repair() raised (counts as triggered): {exc!r}")
     finally:
-        await instructor.close()
+        try:
+            await instructor.close()
+        except Exception:
+            pass
 
     return triggered
 

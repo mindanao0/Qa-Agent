@@ -7,6 +7,7 @@ for each FunctionSpec. Uses asyncio.Semaphore(1) to serialize Ollama calls.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from typing import Literal
 
 from loguru import logger
@@ -314,51 +315,6 @@ def _get_specific_call_hint(spec: "FunctionSpec") -> "tuple[str, str] | None":
             _HAPPY,
         )
 
-    # ── Sprint 7: ShadowLocatorBuilder ────────────────────────────────────────
-    if key == (None, "build") or key == ("ShadowLocatorBuilder", "build"):
-        return (
-            "IMPORTANT: `build` is a SYNC MODULE-LEVEL function.\n"
-            "It returns `f'{host_selector} >> css={inner_selector}'`.\n"
-            "It raises ValueError when inner_selector starts with '/'.\n"
-            "The error message contains 'inner_selector must not be an absolute XPath'.\n"
-            "Use EXACTLY this code:\n"
-            "  result = build('div', 'span')\n"
-            "  assert result == 'div >> css=span'\n"
-            "  raised = False\n"
-            "  try:\n"
-            "      build('div', '/xpath')\n"
-            "  except ValueError as e:\n"
-            "      raised = True\n"
-            "      assert 'inner_selector must not be an absolute XPath' in str(e)\n"
-            "  assert raised",
-            _HAPPY,
-        )
-
-    if key == (None, "build_chain") or key == ("ShadowLocatorBuilder", "build_chain"):
-        return (
-            "IMPORTANT: `build_chain` is a SYNC MODULE-LEVEL function.\n"
-            "It raises ValueError('build_chain requires at least 2 selectors') for fewer than 2 selectors.\n"
-            "With ['a', 'b'] it returns 'a >> css=b'.\n"
-            "It raises ValueError when any selector after the first starts with '/'.\n"
-            "Use EXACTLY this code:\n"
-            "  raised = False\n"
-            "  try:\n"
-            "      build_chain([])\n"
-            "  except ValueError as e:\n"
-            "      raised = True\n"
-            "      assert 'build_chain requires at least 2 selectors' in str(e)\n"
-            "  assert raised\n"
-            "  result = build_chain(['a', 'b'])\n"
-            "  assert result == 'a >> css=b'\n"
-            "  raised2 = False\n"
-            "  try:\n"
-            "      build_chain(['host', '/xpath'])\n"
-            "  except ValueError:\n"
-            "      raised2 = True\n"
-            "  assert raised2",
-            _HAPPY,
-        )
-
     return None
 
 
@@ -632,8 +588,7 @@ class PytestGenerator:
         # bypassing the LLM to avoid hallucinated assertions.
         literal_code = _get_literal_test_code(spec)
         if literal_code is not None:
-            import hashlib as _hashlib
-            test_id = _hashlib.sha256((spec.module_path + spec.func_name + "literal").encode()).hexdigest()[:10]
+            test_id = hashlib.sha256((spec.module_path + spec.func_name + "literal").encode()).hexdigest()[:10]
             logger.info(f"PytestGenerator: using literal test code for {spec.func_name!r}")
             return GeneratedTest(
                 test_id=test_id,
