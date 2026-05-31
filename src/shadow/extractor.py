@@ -1,0 +1,86 @@
+# src/shadow/extractor.py
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict
+
+
+class ShadowNode(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str
+    host_role: str
+    shadow_mode: Literal["open", "closed"]
+    children: list[str]   # child nodeIds as strings
+    ax_label: str | None
+
+
+class ShadowDOMExtractor:
+    """CDP-based Shadow DOM extractor. No required constructor args."""
+
+    async def extract(self, page: Any) -> list[ShadowNode]:
+        client = await page.context.new_cdp_session(page)
+        try:
+            result = await client.send(
+                "DOM.getFlattenedDocument", {"depth": -1, "pierce": True}
+            )
+        finally:
+            await client.detach()
+
+        nodes: list[dict] = result.get("nodes", [])
+        node_map: dict[int, dict] = {n["nodeId"]: n for n in nodes}
+        shadow_nodes: list[ShadowNode] = []
+
+        for node in nodes:
+            shadow_root_type = node.get("shadowRootType")
+            if shadow_root_type not in ("open", "closed", "user-agent"):
+                continue
+
+            parent_id = node.get("parentId")
+            host_role = "unknown"
+            if parent_id and parent_id in node_map:
+                parent = node_map[parent_id]
+                host_role = (
+                    parent.get("localName")
+                    or parent.get("nodeName", "unknown").lower()
+                )
+
+            children = [
+                str(n["nodeId"])
+                for n in nodes
+                if n.get("parentId") == node["nodeId"]
+            ]
+
+            shadow_nodes.append(
+                ShadowNode(
+                    node_id=str(node["nodeId"]),
+                    host_role=host_role,
+                    shadow_mode="open" if shadow_root_type in ("open", "user-agent") else "closed",
+                    children=children,
+                    ax_label=None,
+                )
+            )
+
+        return shadow_nodes
+
+    def merge_into_ax(
+        self,
+        ax_nodes: list[dict],
+        shadow_nodes: list[ShadowNode],
+    ) -> list[dict]:
+        role_to_label: dict[str, str] = {
+            sn.host_role: sn.ax_label
+            for sn in shadow_nodes
+            if sn.ax_label is not None
+        }
+        merged: list[dict] = []
+        for node in ax_nodes:
+            node_role = (node.get("role") or {}).get("value", "")
+            if node_role in role_to_label:
+                node = {**node, "shadow_label": role_to_label[node_role]}
+            merged.append(node)
+        return merged
+
+
+__all__ = ["ShadowDOMExtractor", "ShadowNode"]
