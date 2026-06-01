@@ -21,10 +21,9 @@ _tracer = OTelTracer()
 
 
 def _normalize_escapes(code: str) -> str:
-    """Fix LLM double-escaped newlines: literal \\n → actual newline."""
-    if "\n" not in code and "\\n" in code:
-        code = code.replace("\\n", "\n").replace("\\t", "  ")
-    return code
+    """Fix LLM double-escaped newlines: literal backslash-n → actual newline."""
+    # Safe unconditional: '\\n' (2 chars) → '\n' (1 char); actual newlines (1 char) are unaffected
+    return code.replace("\\n", "\n")
 
 
 class JSTestResult(BaseModel):

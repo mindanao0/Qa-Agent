@@ -10,18 +10,21 @@ export function truncate(str: string, maxLen: number, suffix: string = '...'): s
   return str.slice(0, maxLen) + suffix;
 }
 
-/** Format a Date or ISO string for the given locale (default en-US). Returns 'Invalid Date' on bad input. */
-export function formatDate(date: Date | string, locale: string = 'en-US'): string {
+/** Format a Date or ISO string as YYYY-MM-DD. Returns 'Invalid Date' on bad input. */
+export function formatDate(date: Date | string): string {
   const d = typeof date === 'string' ? new Date(date) : date;
   if (isNaN(d.getTime())) return 'Invalid Date';
-  return d.toLocaleDateString(locale);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 /** Convert a camelCase or snake_case string to kebab-case. Trims leading and trailing dashes. */
 export function kebabCase(str: string): string {
   return str
     .replace(/([A-Z])/g, '-$1')
-    .replace(/[\s_]+/g, '-')
+    .replace(/[ _]+/g, '-')
     .toLowerCase()
     .replace(/^-|-$/g, '');
 }
