@@ -16,19 +16,22 @@ _JS_SEMAPHORE = asyncio.Semaphore(1)
 _CODER_MODEL = "qwen2.5-coder:7b-instruct-q4_K_M"
 
 _JS_SYSTEM_PROMPT = (
-    "You are a TypeScript/Vitest test engineer generating self-contained test files. "
-    "STRICT RULES: "
-    "(1) test_code MUST begin with the EXACT TypeScript implementation provided — "
-    "    COPY IT VERBATIM, do NOT rewrite or simplify it; "
-    "(2) after the implementation, add: import { describe, it, expect } from 'vitest'; "
-    "(3) wrap tests in describe()/it() blocks; "
-    "(4) every it() block must call expect(); "
-    "(5) NO setTimeout or setInterval in test body; "
-    "(6) ALL async tests use async/await, never .then(); "
-    "(7) for test_type='metamorphic', provide a non-null metamorphic_relation; "
-    "(8) Write assertions by mentally executing the EXACT implementation provided — "
-    "    do NOT guess; trace through the code step by step; "
-    "(9) ALWAYS use double-quoted strings in test_code to avoid JSON escaping issues; "
+    "You are a TypeScript/Vitest test engineer. "
+    "test_code MUST have ALL THREE parts — EXAMPLE:\n"
+    "```\n"
+    "function add(a, b) { return a + b; }\n"
+    "import { describe, it, expect } from \"vitest\";\n"
+    "describe(\"add\", () => {\n"
+    "  it(\"adds two numbers\", () => { expect(add(1, 2)).toBe(3); });\n"
+    "  it(\"handles negatives\", () => { expect(add(-1, 1)).toBe(0); });\n"
+    "});\n"
+    "```\n"
+    "RULES: (1) Copy implementation VERBATIM as shown above; "
+    "(2) ALWAYS add: import { describe, it, expect } from \"vitest\"; "
+    "(3) ALWAYS wrap tests in describe()/it() blocks after the import; "
+    "(4) every it() MUST call expect(); "
+    "(5) NO setTimeout or setInterval; "
+    "(6) metamorphic tests need non-null metamorphic_relation. "
     "Return ONLY valid JSON."
 )
 
@@ -90,27 +93,32 @@ def _build_prompt(spec: JSFunctionSpec) -> str:
     params_desc = ", ".join(spec.params) if spec.params else "(none)"
     ret = spec.return_type or "unknown"
     meta_hint = (
-        "\nIMPORTANT: complexity is high — use test_type='metamorphic' and provide "
-        "a non-null, falsifiable metamorphic_relation (e.g. 'f(x+1) >= f(x) for positive x')."
+        " Use test_type='metamorphic' and provide a non-null falsifiable metamorphic_relation."
         if spec.complexity >= 2
-        else "\nUse test_type='happy_path' or 'edge_case'. metamorphic_relation must be null."
+        else " Use test_type='happy_path' or 'edge_case'. metamorphic_relation must be null."
     )
     source = _read_func_source(spec)
     if source:
-        source_block = f"\nCOPY THIS EXACT IMPLEMENTATION VERBATIM (do not change a single character):\n```typescript\n{source}\n```"
+        # Strip 'export' keyword so the inline copy works without module system
+        bare_source = source.replace("export function ", "function ").replace("export async function ", "async function ")
+        source_section = (
+            f"PART 1 — copy this implementation VERBATIM into test_code:\n"
+            f"```typescript\n{bare_source}\n```\n"
+            f"PART 2 — add this exact line after the implementation:\n"
+            f'import {{ describe, it, expect }} from "vitest";\n'
+            f"PART 3 — add a describe(\"{spec.func_name}\", ...) block with 2-3 it() assertions.\n"
+            f"Trace through the implementation to determine correct expected values."
+        )
     else:
-        jsdoc = spec.jsdoc or "No documentation."
-        source_block = (
-            f"\nJSDoc: {jsdoc}\n"
-            f"Implement the function from scratch based on its name and signature."
+        jsdoc = spec.jsdoc or ""
+        source_section = (
+            f"JSDoc: {jsdoc}\n"
+            f"Write the implementation from the function signature, then the vitest tests."
         )
     return (
-        f"Function: {spec.func_name}({params_desc}) -> {ret}\n"
-        f"Async: {spec.is_async}\n"
-        f"Complexity: {spec.complexity}\n"
-        f"test_id should be 'test_{spec.func_name}'."
-        f"{source_block}"
-        f"{meta_hint}"
+        f"Function: {spec.func_name}({params_desc}) -> {ret} | Async: {spec.is_async}\n"
+        f"test_id='test_{spec.func_name}'.{meta_hint}\n\n"
+        f"{source_section}"
     )
 
 
