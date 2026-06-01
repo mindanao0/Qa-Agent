@@ -19,6 +19,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "pyyaml>=6.0.2",
     "loguru>=0.7.2",
+    "opentelemetry-sdk>=1.25.0",
     "filelock>=3.16.0",
     "aiofiles>=24.1.0",
     "rich>=13.9.0",
