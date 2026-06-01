@@ -101,6 +101,9 @@ def _build_prompt(spec: JSFunctionSpec) -> str:
     if source:
         # Strip 'export' keyword so the inline copy works without module system
         bare_source = source.replace("export function ", "function ").replace("export async function ", "async function ")
+        # Double-escape regex backslash sequences so the LLM outputs them correctly in JSON
+        # e.g. \s in source → \\s in prompt → LLM outputs \\s in JSON → json.loads gives \s
+        bare_source = re.sub(r'\\([sdwSDWB])', lambda m: '\\\\' + m.group(1), bare_source)
         source_section = (
             f"PART 1 — copy this implementation VERBATIM into test_code:\n"
             f"```typescript\n{bare_source}\n```\n"

@@ -5,6 +5,7 @@ import asyncio
 import json
 import pathlib
 import subprocess
+import sys
 import uuid
 
 from loguru import logger
@@ -17,6 +18,13 @@ _PROJECT_ROOT = pathlib.Path(__file__).parent.parent.parent
 _VITEST_TIMEOUT = 60
 
 _tracer = OTelTracer()
+
+
+def _normalize_escapes(code: str) -> str:
+    """Fix LLM double-escaped newlines: literal \\n → actual newline."""
+    if "\n" not in code and "\\n" in code:
+        code = code.replace("\\n", "\n").replace("\\t", "  ")
+    return code
 
 
 class JSTestResult(BaseModel):
@@ -47,7 +55,8 @@ class JSTestExecutor:
         test_files: list[pathlib.Path] = []
         for t in tests:
             p = work_dir / f"test_{t.test_id}.test.ts"
-            p.write_text(t.test_code, encoding="utf-8")
+            code = _normalize_escapes(t.test_code)
+            p.write_text(code, encoding="utf-8")
             test_files.append(p)
 
         results_file = work_dir / f"vitest_results_{uuid.uuid4().hex[:8]}.json"
@@ -79,8 +88,10 @@ class JSTestExecutor:
         test_files: list[pathlib.Path],
         results_file: pathlib.Path,
     ) -> dict[str, dict]:
+        # On Windows, npx is a .cmd script and needs shell=True (or explicit npx.cmd)
+        npx_bin = "npx.cmd" if sys.platform == "win32" else "npx"
         cmd = [
-            "npx", "vitest", "run",
+            npx_bin, "vitest", "run",
             "--reporter=json",
             f"--outputFile={results_file.absolute()}",
         ] + [str(f.absolute()) for f in test_files]
@@ -115,7 +126,8 @@ class JSTestExecutor:
 
         result_map: dict[str, dict] = {}
         for suite in data.get("testResults", []):
-            path_str = suite.get("testFilePath", "")
+            # vitest JSON reporter uses "name" (not "testFilePath") for the file path
+            path_str = suite.get("name", "") or suite.get("testFilePath", "")
             fname = pathlib.Path(path_str).name
             test_id = fname.removesuffix(".test.ts").removeprefix("test_")
             status = suite.get("status", "failed")
