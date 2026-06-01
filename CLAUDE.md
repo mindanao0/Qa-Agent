@@ -13,17 +13,28 @@
 All specifications are in docs/specs/
 
 ## Active Task
-Sprint 8 CLOSED 2026-06-01 — CI/CD GitHub Actions + Observability complete. All gates PASS.
-Results: pipeline_stages_defined=4, otel_spans_emitted=5, structured_log_fields=9,
-audit_trail_entries=10, audit_chain_valid=true, regression=false.
-See audit/sprint8/sprint8_results.json.
-New components: OTelTracer (local JSONL spans), StructuredLogger (9-field entries),
-CryptoAuditTrail (sha256 hash chain), AgentMetrics (singleton counter/histogram).
-All 5 LangGraph nodes (planner, generator, bft, executor, healer) wrapped with spans.
-GitHub Actions pipeline: .github/workflows/qa_agent.yml (lint → test-unit → test-e2e → report).
-Next: Sprint 9 — TBD.
+Sprint 9 CLOSED 2026-06-02 — JS/TS Code Testing complete. All gates PASS.
+Results: js_functions_parsed=12, tests_generated=12, test_pass_rate=0.8333,
+metamorphic_pairs=10, otel_spans_emitted=5, regression=false.
+See audit/sprint9/sprint9_results.json.
+New components: JSASTParser (Babel AST via Node.js subprocess → JSFunctionSpec),
+JSTestGenerator (Ollama → self-contained Vitest tests, Semaphore(1)),
+JSCodeJudge (4 checks: has_expect, no_settimeout, valid_vitest_sig, metamorphic_valid),
+JSTestExecutor (npx vitest run --reporter=json, OTelTracer.span wrapper).
+JS targets: src/js_targets/ (12 exported functions: utils, validators, formatters).
+Node.js entry: scripts/ast_walker.js (@babel/parser + @babel/traverse).
+Key lesson: 7B model needs actual source verbatim in prompt + explicit 3-part structure
+(implementation → vitest import → describe/it blocks) to generate reliable tests.
+Avoid regex backslash sequences ([\s_]+) in source targets — use [ _]+ for portability.
+Next: Sprint 10 — TBD.
 
 Prior sprints (carry-over notes):
+- Sprint 8: CLOSED 2026-06-01 — CI/CD GitHub Actions + Observability complete. All gates PASS.
+  Results: pipeline_stages_defined=4, otel_spans_emitted=5, structured_log_fields=9,
+  audit_trail_entries=10, audit_chain_valid=true. See audit/sprint8/sprint8_results.json.
+  Components: OTelTracer, StructuredLogger, CryptoAuditTrail, AgentMetrics.
+  All 5 LangGraph nodes wrapped with spans. GitHub Actions: qa_agent.yml (4 stages).
+
 - Sprint 7: CLOSED — Shadow DOM + SPA Agent + self-heal. All gates PASS.
   Results: shadow_dom_elements_found≥5, spa_transitions_handled≥3, test_pass_rate≥0.75,
   self_heal_triggered≥1. See audit/sprint7/sprint7_results.json.
