@@ -13,7 +13,22 @@
 All specifications are in docs/specs/
 
 ## Active Task
-Sprint 9 CLOSED 2026-06-02 — JS/TS Code Testing complete. All gates PASS.
+Sprint 10 CLOSED 2026-06-02 — Race Condition Swarm + Autonomous API Fuzzing complete. All gates PASS.
+Results: race_scenarios_tested=5, race_conditions_detected=5, fuzz_endpoints_tested=7,
+fuzz_anomalies_found=47, otel_spans_emitted=23, audit_trail_entries=21, regression=false.
+See audit/sprint10/sprint10_results.json.
+New components: RaceConditionSwarm (asyncio.Barrier, isolated BrowserContext per agent, AX hash
+via CDP, SynchronizationDriftError), ConflictDetector (analyze() → 5-key dict), FuzzVectorLibrary
+(10 BASE_VECTORS), AutonomousAPIFuzzer (page.on("request") discovery, Ollama vector augmentation
+Semaphore(1) temp=0.1, jsonschema.validate, OTelTracer.span("api.fuzz")), measure_sprint10.py
+(5 TodoMVC race scenarios + 7 jsonplaceholder fuzz endpoints discovered automatically).
+Race targets: demo.playwright.dev/todomvc. Fuzz targets: jsonplaceholder.typicode.com.
+Key lesson: asyncio.Barrier(n) synchronizes n concurrent coroutines without sleep; AX hash via
+CDP Accessibility.getFullAXTree catches state differences across isolated contexts; numeric path
+suffixes (-1, null) reliably trigger 404s on REST APIs for anomaly detection.
+Next: TBD.
+
+Prior sprint (Sprint 9 CLOSED 2026-06-02):
 Results: js_functions_parsed=12, tests_generated=12, test_pass_rate=0.8333,
 metamorphic_pairs=10, otel_spans_emitted=5, regression=false.
 See audit/sprint9/sprint9_results.json.
