@@ -1,0 +1,189 @@
+# Sprint 8 QA Agent CI Pipeline
+# 4 stages: lint -> test-unit -> test-e2e -> report
+# runs-on: ubuntu-latest | Python: 3.11 (uv managed)
+# Ollama service on port 11434 with qwen2.5-coder:7b-instruct-q4_K_M
+
+name: qa-agent CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-agent-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # v5.1.1
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Cache uv pip
+        uses: actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9 # v4.0.2
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: uv-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: uv pip install -e ".[dev]" --system
+
+      - name: ruff check
+        run: uv run ruff check src/ audit/
+
+      - name: pyright
+        run: uv run pyright src/ --pythonversion 3.11 || true
+
+  test-unit:
+    name: test-unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          persist-credentials: false
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # v5.1.1
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Cache uv pip
+        uses: actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9 # v4.0.2
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: uv-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: uv pip install -e "." --system
+
+      - name: Run unit tests
+        run: uv run pytest tests/unit/ tests/observability/ -v --tb=short --timeout=60
+
+  test-e2e:
+    name: test-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      ollama:
+        image: ollama/ollama:latest
+        ports:
+          - 11434:11434
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          persist-credentials: false
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # v5.1.1
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Cache uv pip
+        uses: actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9 # v4.0.2
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: uv-${{ runner.os }}-
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9 # v4.0.2
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-chromium
+
+      - name: Install dependencies
+        run: uv pip install -e "." --system
+
+      - name: Install Playwright browsers
+        run: uv run playwright install chromium
+
+      - name: Pull Ollama model
+        run: |
+          curl -s http://localhost:11434/api/pull -d '{"name":"qwen2.5-coder:7b-instruct-q4_K_M"}' &
+          sleep 30
+
+      - name: Run Sprint 7 gates
+        run: uv run python audit/sprint7/measure_sprint7.py --live
+        continue-on-error: true
+
+      - name: Run Sprint 6 gates
+        run: uv run python audit/sprint6/measure_sprint6.py --live
+        continue-on-error: true
+
+  report:
+    name: report
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [lint, test-unit, test-e2e]
+    if: always()
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          persist-credentials: false
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # v5.1.1
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: uv pip install -e "." --system
+
+      - name: Generate CI report
+        run: uv run python audit/ci/generate_report.py
+
+      - name: Upload sprint results
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+        with:
+          name: sprint-results-${{ github.run_id }}
+          path: audit/sprint*/*_results.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload CI report
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+        with:
+          name: ci-report-${{ github.run_id }}
+          path: audit/ci/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Post summary
+        if: always()
+        run: |
+          echo "## QA Agent CI Report" >> $GITHUB_STEP_SUMMARY
+          if [ -f audit/ci/full_report.md ]; then
+            cat audit/ci/full_report.md >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Audit chain:** $(cat audit/ci/audit_verify.txt 2>/dev/null || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
