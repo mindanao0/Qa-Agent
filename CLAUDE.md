@@ -13,16 +13,28 @@
 All specifications are in docs/specs/
 
 ## Active Task
-Sprint 4 CLOSED 2026-05-30 — ContractSkill + SFG Crawler live. All gates PASS.
-Results: after_pass_rate=1.00, contract_skills_compiled=4, sfg_nodes_discovered=15,
-skills_used_in_generation=4, regression=false. See audit/sprint4/sprint4_results.json.
-Key fix: CrawlerConfig expanded to max_pages=20, max_depth=4, max_time_minutes=10 to
-clear sfg_nodes_discovered ≥ 10 gate (was 7 with max_pages=5).
-Active components: SFGCrawler (BFS crawler → SFGStore SQLite), ContractSkillCompiler
-(trajectory → ContractSkill), bft_generator_node CONTRACT_CACHE_HIT path (skill injection).
-Next: Sprint 5 — TBD.
+Sprint 8 CLOSED 2026-06-01 — CI/CD GitHub Actions + Observability complete. All gates PASS.
+Results: pipeline_stages_defined=4, otel_spans_emitted=5, structured_log_fields=9,
+audit_trail_entries=10, audit_chain_valid=true, regression=false.
+See audit/sprint8/sprint8_results.json.
+New components: OTelTracer (local JSONL spans), StructuredLogger (9-field entries),
+CryptoAuditTrail (sha256 hash chain), AgentMetrics (singleton counter/histogram).
+All 5 LangGraph nodes (planner, generator, bft, executor, healer) wrapped with spans.
+GitHub Actions pipeline: .github/workflows/qa_agent.yml (lint → test-unit → test-e2e → report).
+Next: Sprint 9 — TBD.
 
 Prior sprints (carry-over notes):
+- Sprint 7: CLOSED — Shadow DOM + SPA Agent + self-heal. All gates PASS.
+  Results: shadow_dom_elements_found≥5, spa_transitions_handled≥3, test_pass_rate≥0.75,
+  self_heal_triggered≥1. See audit/sprint7/sprint7_results.json.
+
+- Sprint 4: CLOSED 2026-05-30 — ContractSkill + SFG Crawler live. All gates PASS.
+  Results: after_pass_rate=1.00, contract_skills_compiled=4, sfg_nodes_discovered=15,
+  skills_used_in_generation=4, regression=false. See audit/sprint4/sprint4_results.json.
+  Key fix: CrawlerConfig expanded to max_pages=20, max_depth=4, max_time_minutes=10.
+  Active components: SFGCrawler (BFS crawler → SFGStore SQLite), ContractSkillCompiler
+  (trajectory → ContractSkill), bft_generator_node CONTRACT_CACHE_HIT path (skill injection).
+
 - Sprint 3: CLOSED 2026-05-29 — BFT deactivated (hardware constraint), Judge strengthened.
   Root cause: 7B model + Pydantic V2 strict + max_retries=1 → T>0 generators fail schema,
   quorum impossible. See audit/sprint3/SPRINT3_FINAL_LOG.md.
