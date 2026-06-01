@@ -49,6 +49,10 @@ from src.llm.instructor_client import InstructorClient
 from .planner import PlannerAgent
 from .generator import GeneratorAgent
 from .healer import CodeHealerAgent
+from src.observability.tracer import OTelTracer
+from src.observability.structured_logger import StructuredLogger
+from src.observability.audit_chain import CryptoAuditTrail
+from src.observability.metrics import AgentMetrics
 
 if TYPE_CHECKING:
     from src.healing.state_validator import StateValidator
@@ -58,6 +62,10 @@ if TYPE_CHECKING:
 _SESSIONS_DIR = Path(os.path.expanduser("~/.qa-agent/sessions"))
 _DEFAULT_MAX_RETRIES = 3
 _EXECUTOR_TIMEOUT_SEC = 300
+_tracer = OTelTracer()
+_structured_logger = StructuredLogger()
+_audit_trail = CryptoAuditTrail(Path(os.path.expanduser("~/.qa-agent/audit_chain.jsonl")))
+_metrics = AgentMetrics.instance()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -162,59 +170,65 @@ def build_graph(
     async def planner_node(state: QAAgentState) -> dict[str, Any]:
         logger.info("▶ planner_node")
 
-        # Ground the page to produce a CompactPAM when the feature is enabled
-        # and a live Playwright Page is available in state.
-        page_state: str = state.get("page_state") or ""
-        if get_use_grounder() and state.get("page"):
-            try:
-                from src.perception.grounder import Grounder
-                grounder = Grounder()
-                pam = await grounder.ground(
-                    state["page"],
-                    context_budget_tokens=get_context_budget_tokens(),
-                )
-                page_state = pam.content
-                if pam.source == "failure":
-                    page_state = page_state + (
-                        "\n\n**DEGRADED MODE**: Perception layer failed. "
-                        "Use only the URL and page title above to make a best-effort plan. "
-                        "Prefer generic actions (navigate, wait) over selector-specific ones. "
-                        "If you cannot proceed safely, return an empty plan."
+        async with _tracer.span("node.planner", url=state.get("url", "")):
+            _metrics.increment("node.planner.calls")
+            # Ground the page to produce a CompactPAM when the feature is enabled
+            # and a live Playwright Page is available in state.
+            page_state: str = state.get("page_state") or ""
+            if get_use_grounder() and state.get("page"):
+                try:
+                    from src.perception.grounder import Grounder
+                    grounder = Grounder()
+                    pam = await grounder.ground(
+                        state["page"],
+                        context_budget_tokens=get_context_budget_tokens(),
                     )
+                    page_state = pam.content
+                    if pam.source == "failure":
+                        page_state = page_state + (
+                            "\n\n**DEGRADED MODE**: Perception layer failed. "
+                            "Use only the URL and page title above to make a best-effort plan. "
+                            "Prefer generic actions (navigate, wait) over selector-specific ones. "
+                            "If you cannot proceed safely, return an empty plan."
+                        )
+                        logger.warning(
+                            f"planner_node: Grounder returned failure PAM for "
+                            f"{state.get('url', '')} — operating in DEGRADED MODE"
+                        )
+                    logger.info(
+                        f"planner_node: Grounder produced PAM "
+                        f"({len(page_state)} chars, source={pam.source})"
+                    )
+                except Exception as exc:
                     logger.warning(
-                        f"planner_node: Grounder returned failure PAM for "
-                        f"{state.get('url', '')} — operating in DEGRADED MODE"
+                        f"planner_node: Grounder failed, proceeding without "
+                        f"page state: {exc}"
                     )
-                logger.info(
-                    f"planner_node: Grounder produced PAM "
-                    f"({len(page_state)} chars, source={pam.source})"
-                )
-            except Exception as exc:
-                logger.warning(
-                    f"planner_node: Grounder failed, proceeding without "
-                    f"page state: {exc}"
-                )
 
-        plan = await planner_agent.plan(
-            requirement=state.get("requirement", ""),
-            url=state.get("url", ""),
-            role=state.get("role", "admin"),
-            domain=state.get("domain", "general"),
-            page_state=page_state,
-        )
-        # Surface the detected domain to the state so generator/healer can use it.
-        update = {
-            "test_plan": plan.model_dump(),
-            "domain": plan.domain,
-            "messages": (state.get("messages") or [])
-            + [{
-                "role": "system",
-                "content": (
-                    f"[PlannerAgent] Plan created: {plan.title} "
-                    f"(domain={plan.domain})"
-                ),
-            }],
-        }
+            plan = await planner_agent.plan(
+                requirement=state.get("requirement", ""),
+                url=state.get("url", ""),
+                role=state.get("role", "admin"),
+                domain=state.get("domain", "general"),
+                page_state=page_state,
+            )
+            # Surface the detected domain to the state so generator/healer can use it.
+            update = {
+                "test_plan": plan.model_dump(),
+                "domain": plan.domain,
+                "messages": (state.get("messages") or [])
+                + [{
+                    "role": "system",
+                    "content": (
+                        f"[PlannerAgent] Plan created: {plan.title} "
+                        f"(domain={plan.domain})"
+                    ),
+                }],
+            }
+            _structured_logger.info("PlannerNode", "plan_complete",
+                                    payload={"domain": plan.domain})
+            _audit_trail.append("planner_complete", {"domain": plan.domain,
+                                                      "url": state.get("url", "")})
         _save_session(state, update)
         return update
 
@@ -224,53 +238,58 @@ def build_graph(
         if not plan_dict:
             raise ValueError("generator_node: test_plan is missing from state")
 
-        # Ground the page for the generator pass (re-use planner's page_state
-        # if already computed; otherwise ground again for freshness).
-        page_state: str = state.get("page_state") or ""
-        if get_use_grounder() and state.get("page") and not page_state:
-            try:
-                from src.perception.grounder import Grounder
-                grounder = Grounder()
-                pam = await grounder.ground(
-                    state["page"],
-                    context_budget_tokens=get_context_budget_tokens(),
-                )
-                page_state = pam.content
-                if pam.source == "failure":
-                    page_state = page_state + (
-                        "\n\n**DEGRADED MODE**: Perception layer failed. "
-                        "Use only the URL and page title above to make a best-effort plan. "
-                        "Prefer generic actions (navigate, wait) over selector-specific ones. "
-                        "If you cannot proceed safely, return an empty plan."
+        async with _tracer.span("node.generator", url=state.get("url", "")):
+            _metrics.increment("node.generator.calls")
+            # Ground the page for the generator pass (re-use planner's page_state
+            # if already computed; otherwise ground again for freshness).
+            page_state: str = state.get("page_state") or ""
+            if get_use_grounder() and state.get("page") and not page_state:
+                try:
+                    from src.perception.grounder import Grounder
+                    grounder = Grounder()
+                    pam = await grounder.ground(
+                        state["page"],
+                        context_budget_tokens=get_context_budget_tokens(),
                     )
+                    page_state = pam.content
+                    if pam.source == "failure":
+                        page_state = page_state + (
+                            "\n\n**DEGRADED MODE**: Perception layer failed. "
+                            "Use only the URL and page title above to make a best-effort plan. "
+                            "Prefer generic actions (navigate, wait) over selector-specific ones. "
+                            "If you cannot proceed safely, return an empty plan."
+                        )
+                        logger.warning(
+                            f"generator_node: Grounder returned failure PAM for "
+                            f"{state.get('url', '')} — operating in DEGRADED MODE"
+                        )
+                    logger.info(
+                        f"generator_node: Grounder produced PAM "
+                        f"({len(page_state)} chars, source={pam.source})"
+                    )
+                except Exception as exc:
                     logger.warning(
-                        f"generator_node: Grounder returned failure PAM for "
-                        f"{state.get('url', '')} — operating in DEGRADED MODE"
+                        f"generator_node: Grounder failed, proceeding without "
+                        f"page state: {exc}"
                     )
-                logger.info(
-                    f"generator_node: Grounder produced PAM "
-                    f"({len(page_state)} chars, source={pam.source})"
-                )
-            except Exception as exc:
-                logger.warning(
-                    f"generator_node: Grounder failed, proceeding without "
-                    f"page state: {exc}"
-                )
 
-        plan = TestPlan.model_validate(plan_dict)
-        script = await generator_agent.generate(
-            test_plan=plan,
-            url=state.get("url", ""),
-            role=state.get("role", "admin"),
-            domain=state.get("domain", "general"),
-            page_state=page_state,
-        )
-        update = {
-            "script": script.model_dump(),
-            "error": None,
-            "messages": (state.get("messages") or [])
-            + [{"role": "system", "content": f"[GeneratorAgent] Script generated: {script.test_function_name}"}],
-        }
+            plan = TestPlan.model_validate(plan_dict)
+            script = await generator_agent.generate(
+                test_plan=plan,
+                url=state.get("url", ""),
+                role=state.get("role", "admin"),
+                domain=state.get("domain", "general"),
+                page_state=page_state,
+            )
+            update = {
+                "script": script.model_dump(),
+                "error": None,
+                "messages": (state.get("messages") or [])
+                + [{"role": "system", "content": f"[GeneratorAgent] Script generated: {script.test_function_name}"}],
+            }
+            _structured_logger.info("GeneratorNode", "script_generated",
+                                    payload={"func": script.test_function_name})
+            _audit_trail.append("generator_complete", {"func": script.test_function_name})
         _save_session(state, update)
         return update
 
@@ -283,19 +302,24 @@ def build_graph(
         ``judge_rejection_reason``.
         """
         logger.info("▶ bft_generator_node (BFT pipeline)")
-        update = await _bft_generator_node(
-            state,
-            instructor_client=_bft_instructor,
-            judge_client=_judge_client,
-            router=_router,
-        )
-        update["messages"] = (state.get("messages") or []) + [{
-            "role": "system",
-            "content": (
-                f"[BFTGenerator] status={update.get('bft_status')} "
-                f"tier={update.get('bft_confidence_tier', 'LOW')}"
-            ),
-        }]
+        async with _tracer.span("node.bft"):
+            _metrics.increment("node.bft.calls")
+            update = await _bft_generator_node(
+                state,
+                instructor_client=_bft_instructor,
+                judge_client=_judge_client,
+                router=_router,
+            )
+            update["messages"] = (state.get("messages") or []) + [{
+                "role": "system",
+                "content": (
+                    f"[BFTGenerator] status={update.get('bft_status')} "
+                    f"tier={update.get('bft_confidence_tier', 'LOW')}"
+                ),
+            }]
+            _structured_logger.info("BFTNode", "bft_complete",
+                                    payload={"status": update.get("bft_status", "")})
+            _audit_trail.append("bft_complete", {"status": update.get("bft_status", "")})
         _save_session(state, update)
         return update
 
@@ -305,60 +329,69 @@ def build_graph(
         if not script_dict:
             raise ValueError("executor_node: script is missing from state")
 
-        code: str = script_dict.get("code", "")
-        result = await _run_script(code, timeout=_EXECUTOR_TIMEOUT_SEC)
+        async with _tracer.span("node.executor"):
+            _metrics.increment("node.executor.calls")
+            code: str = script_dict.get("code", "")
+            result = await _run_script(code, timeout=_EXECUTOR_TIMEOUT_SEC)
 
-        update: dict[str, Any] = {
-            "execution_result": result,
-            "retry_count": state.get("retry_count", 0),
-        }
+            update: dict[str, Any] = {
+                "execution_result": result,
+                "retry_count": state.get("retry_count", 0),
+            }
 
-        # ── Sprint 2: StateValidator scaffolding ───────────────────────────
-        # _run_script is a subprocess, so there is no in-process live Page
-        # to validate post-action.  We still wire the integration here as
-        # scaffolding for a future in-process executor.
-        live_page = state.get("page")
-        if state_validator is not None:
-            if live_page is None:
-                logger.info(
-                    "executor_node: state_validator configured but no live page "
-                    "in state — skipping post-action classification (subprocess executor)"
+            # ── Sprint 2: StateValidator scaffolding ───────────────────────────
+            # _run_script is a subprocess, so there is no in-process live Page
+            # to validate post-action.  We still wire the integration here as
+            # scaffolding for a future in-process executor.
+            live_page = state.get("page")
+            if state_validator is not None:
+                if live_page is None:
+                    logger.info(
+                        "executor_node: state_validator configured but no live page "
+                        "in state — skipping post-action classification (subprocess executor)"
+                    )
+                else:
+                    try:
+                        pre = await state_validator.capture_pre_state(live_page)
+                        classification = await state_validator.classify_post_action(
+                            live_page, pre, action_id="executor_post"
+                        )
+                        update["state_classification"] = classification.model_dump()
+                        if (
+                            classification.outcome_label == "Error_State"
+                            and classification.failure_signature
+                        ):
+                            update["failure_signature"] = classification.failure_signature
+                    except Exception as exc:
+                        logger.warning(
+                            f"executor_node: state validation failed: {exc}"
+                        )
+
+            if result["success"]:
+                logger.info("executor_node: test PASSED ✓")
+                update["error"] = None
+                _structured_logger.info("ExecutorNode", "test_passed")
+                _audit_trail.append("executor_pass", {"code_len": len(code)})
+            elif result.get("returncode") == 5:
+                logger.error(
+                    "executor_node: exit code 5 = no test functions collected. "
+                    "Test functions must start with 'test_' and use sync pytest-playwright format."
                 )
+                update["error"] = (
+                    "No tests collected (pytest exit 5) — "
+                    "generated code has no test_ functions or used wrong Playwright API. "
+                    "Regenerate using sync pytest-playwright: "
+                    "def test_<name>(page: Page) -> None, import from playwright.sync_api."
+                )
+                _structured_logger.error("ExecutorNode", "test_failed",
+                                         payload={"returncode": 5})
+                _audit_trail.append("executor_fail", {"returncode": 5})
             else:
-                try:
-                    pre = await state_validator.capture_pre_state(live_page)
-                    classification = await state_validator.classify_post_action(
-                        live_page, pre, action_id="executor_post"
-                    )
-                    update["state_classification"] = classification.model_dump()
-                    if (
-                        classification.outcome_label == "Error_State"
-                        and classification.failure_signature
-                    ):
-                        update["failure_signature"] = classification.failure_signature
-                except Exception as exc:
-                    logger.warning(
-                        f"executor_node: state validation failed: {exc}"
-                    )
-
-        if result["success"]:
-            logger.info("executor_node: test PASSED ✓")
-            update["error"] = None
-        elif result.get("returncode") == 5:
-            logger.error(
-                "executor_node: exit code 5 = no test functions collected. "
-                "Test functions must start with 'test_' and use sync pytest-playwright format."
-            )
-            update["error"] = (
-                "No tests collected (pytest exit 5) — "
-                "generated code has no test_ functions or used wrong Playwright API. "
-                "Regenerate using sync pytest-playwright: "
-                "def test_<name>(page: Page) -> None, import from playwright.sync_api."
-            )
-        else:
-            logger.warning(f"executor_node: test FAILED — {result['output'][:200]}")
-            update["error"] = result["output"]
-
+                logger.warning(f"executor_node: test FAILED — {result['output'][:200]}")
+                update["error"] = result["output"]
+                _structured_logger.error("ExecutorNode", "test_failed",
+                                         payload={"output": result["output"][:200]})
+                _audit_trail.append("executor_fail", {"error": result["output"][:200]})
         _save_session(state, update)
         return update
 
@@ -372,22 +405,27 @@ def build_graph(
         if not script_dict:
             return {"retry_count": state.get("retry_count", 0) + 1}
 
-        script = PlaywrightScript.model_validate(script_dict)
-        error_output = state.get("error") or ""
+        async with _tracer.span("node.healer"):
+            _metrics.increment("node.healer.calls")
+            script = PlaywrightScript.model_validate(script_dict)
+            error_output = state.get("error") or ""
 
-        healed_script = await healer_agent.heal_script(
-            script=script,
-            error_output=error_output,
-            url=state.get("url", ""),
-            role=state.get("role", "admin"),
-        )
+            healed_script = await healer_agent.heal_script(
+                script=script,
+                error_output=error_output,
+                url=state.get("url", ""),
+                role=state.get("role", "admin"),
+            )
 
-        update: dict[str, Any] = {
-            "script": healed_script.model_dump(),
-            "retry_count": state.get("retry_count", 0) + 1,
-            "messages": (state.get("messages") or [])
-            + [{"role": "system", "content": "[HealerAgent] Script healed and ready for retry"}],
-        }
+            update: dict[str, Any] = {
+                "script": healed_script.model_dump(),
+                "retry_count": state.get("retry_count", 0) + 1,
+                "messages": (state.get("messages") or [])
+                + [{"role": "system", "content": "[HealerAgent] Script healed and ready for retry"}],
+            }
+            _structured_logger.info("HealerNode", "heal_attempt",
+                                    payload={"error": error_output[:100]})
+            _audit_trail.append("healer_triggered", {"error": error_output[:100]})
         _save_session(state, update)
         return update
 
