@@ -13,19 +13,40 @@
 All specifications are in docs/specs/
 
 ## Active Task
-Sprint 10 CLOSED 2026-06-02 — Race Condition Swarm + Autonomous API Fuzzing complete. All gates PASS.
-Results: race_scenarios_tested=5, race_conditions_detected=5, fuzz_endpoints_tested=7,
-fuzz_anomalies_found=47, otel_spans_emitted=23, audit_trail_entries=21, regression=false.
-See audit/sprint10/sprint10_results.json.
-New components: RaceConditionSwarm (asyncio.Barrier, isolated BrowserContext per agent, AX hash
-via CDP, SynchronizationDriftError), ConflictDetector (analyze() → 5-key dict), FuzzVectorLibrary
-(10 BASE_VECTORS), AutonomousAPIFuzzer (page.on("request") discovery, Ollama vector augmentation
-Semaphore(1) temp=0.1, jsonschema.validate, OTelTracer.span("api.fuzz")), measure_sprint10.py
-(5 TodoMVC race scenarios + 7 jsonplaceholder fuzz endpoints discovered automatically).
-Race targets: demo.playwright.dev/todomvc. Fuzz targets: jsonplaceholder.typicode.com.
-Key lesson: asyncio.Barrier(n) synchronizes n concurrent coroutines without sleep; AX hash via
-CDP Accessibility.getFullAXTree catches state differences across isolated contexts; numeric path
-suffixes (-1, null) reliably trigger 404s on REST APIs for anomaly detection.
+Sprint Integrity Audit fix CLOSED 2026-06-02 (commit 367c4c4, master) — replaced sentinel /
+structurally-guaranteed gate values in Sprints 5/7/10 with REAL measurements and routed legacy
+Ollama calls through OllamaAdapter. Gates/thresholds were NOT changed and nothing was seeded (per
+the spec's MUST NOT), so Sprints 5 & 10 now honestly FAIL where they previously falsely PASSED —
+this is the intended exposure of the audit findings, NOT a regression.
+Spec: docs/specs/"Fix Sprints 5, 7, 10 + Legacy Violations.md".
+
+Honest live results (trust these result JSONs over any older "PASS" wording below):
+- Sprint 5 → FAIL: exploration_coverage=0.125 (crawler reaches 1 unique TodoMVC state / 8; was the
+  sentinel `1.0 if nodes else 0.0`), hypotheses_generated=6, hypothesis_pass_rate=1.0,
+  skills_reused=0 (forced seeding removed; planner never sets TestHypothesis.source_skill_id).
+  See audit/sprint5/sprint5_results.json.
+- Sprint 7 → PASS (genuine): shadow_dom_elements_found=6, spa_transitions_handled=6,
+  test_pass_rate=1.0 (8/8 BEHAVIORAL literal tests executed on real Chromium, not smoke tests),
+  self_heal_triggered=1 (real RepairEngine.repair() patch; was hardcoded always-1).
+  See audit/sprint7/sprint7_results.json.
+- Sprint 10 → FAIL: race_scenarios_tested=5, race_conditions_detected=0 (was FALSE-POSITIVE 5),
+  fuzz_endpoints_tested=7, fuzz_anomalies_found=45, otel_spans_emitted=23, audit_trail_entries=48,
+  race_detection_method="semantic_hash_comparison". See audit/sprint10/sprint10_results.json.
+
+Sprint 10 components (still live): RaceConditionSwarm (asyncio.Barrier, isolated BrowserContext per
+agent, SynchronizationDriftError), ConflictDetector (analyze() → 5-key dict), FuzzVectorLibrary
+(10 BASE_VECTORS), AutonomousAPIFuzzer (page.on("request") discovery, Ollama augmentation
+Semaphore(1) temp=0.1, jsonschema.validate, OTelTracer.span("api.fuzz")).
+CORRECTED key lesson: hashing the FULL CDP AX tree was a FALSE-POSITIVE generator — nodeId/
+backendDOMNodeId differ across isolated BrowserContexts by construction. swarm._semantic_hash() now
+hashes only role/name/checked of interactive nodes; conflict_found = errors OR >1 distinct semantic
+hash. TodoMVC is localStorage-only + isolated contexts → real races are impossible (0 is the honest
+answer; use a shared-state backend for meaningful race testing).
+Caveat: src/fuzzer/api_fuzzer.py imports jsonschema, which is NOT in pyproject.toml/uv.lock — run
+`uv add jsonschema` or Sprint 10's fuzz phase crashes (ModuleNotFoundError).
+Legacy fix: core/sfg_engine.py page.accessibility→CDP getFullAXTree; generator_agent, planner_agent,
+healer_agent, observer_driver.driver_agent, sfg_engine.compress_memory, finetune.export._smoke_test
+now call Ollama via src.llm.adapter.OllamaAdapter (no direct httpx/aiohttp to :11434).
 Next: TBD.
 
 Prior sprint (Sprint 9 CLOSED 2026-06-02):
@@ -50,9 +71,17 @@ Prior sprints (carry-over notes):
   Components: OTelTracer, StructuredLogger, CryptoAuditTrail, AgentMetrics.
   All 5 LangGraph nodes wrapped with spans. GitHub Actions: qa_agent.yml (4 stages).
 
-- Sprint 7: CLOSED — Shadow DOM + SPA Agent + self-heal. All gates PASS.
-  Results: shadow_dom_elements_found≥5, spa_transitions_handled≥3, test_pass_rate≥0.75,
-  self_heal_triggered≥1. See audit/sprint7/sprint7_results.json.
+- Sprint 7: CLOSED — Shadow DOM + SPA Agent + self-heal. All gates PASS, re-verified GENUINE by
+  the 2026-06-02 audit fix. Results: shadow_dom_elements_found=6, spa_transitions_handled=6,
+  test_pass_rate=1.0 (behavioral literal tests on real Chromium, no longer `assert x is not None`
+  smoke tests), self_heal_triggered=1 (real RepairEngine patch, no longer hardcoded).
+  See audit/sprint7/sprint7_results.json.
+
+- Sprint 5: ExplorationPlanner + HypothesisExecutor. Status FAIL (honest, post-2026-06-02 audit):
+  exploration_coverage=0.125 (< 0.70 gate) and skills_reused=0 (< 2 gate); hypotheses_generated=6
+  and hypothesis_pass_rate=1.0 pass. Root cause is real, not a bug: the BFS crawler only reaches
+  1 unique AOM state on TodoMVC (SPA hash routes dedupe), and the planner generates hypotheses for
+  UNCOVERED flows so no ContractSkill is reused. See audit/sprint5/sprint5_results.json.
 
 - Sprint 4: CLOSED 2026-05-30 — ContractSkill + SFG Crawler live. All gates PASS.
   Results: after_pass_rate=1.00, contract_skills_compiled=4, sfg_nodes_discovered=15,
