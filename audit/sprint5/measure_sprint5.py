@@ -39,11 +39,15 @@ _START_URL = "https://demo.playwright.dev/todomvc/#/"
 _OUTPUT_PATH = pathlib.Path(__file__).parent / "sprint5_results.json"
 
 # Gate thresholds
-_GATE_COVERAGE = 0.70
+_GATE_COVERAGE = 0.70  # coverage gate ≥0.70 = found ≥6 of 8 known ToDoMVC states
 _GATE_HYPOTHESES = 5
 _GATE_PASS_RATE = 0.70
 _GATE_SKILLS_REUSED = 2
 _REGRESSION_THRESHOLD = 0.75
+
+# TodoMVC known reachable states: empty / one-item / multi-item / active-filter /
+# completed-filter / all-completed + 2 edge states (editing, clear-completed) = 8.
+_REACHABLE_ESTIMATE = 8
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -98,78 +102,25 @@ async def _load_existing_skills(store: ContractSkillStore) -> list[ContractSkill
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Seed ContractSkillStore from SFG nodes (when store is empty)
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-async def _seed_contract_skills(
-    sfg_store: SFGStore,
-    skill_store: ContractSkillStore,
-) -> None:
-    """
-    If the ContractSkillStore is empty, compile 2 minimal skills from SFG
-    nodes already in the database so the gap-analysis gate can pass.
-    These represent known TodoMVC flows discovered in Sprint 4.
-    """
-    import hashlib
-    from datetime import datetime, timezone
-
-    rows = await asyncio.to_thread(lambda: skill_store._table.to_arrow().to_pylist())
-    if rows:
-        return  # store already has data — nothing to seed
-
-    nodes = sfg_store.get_nodes_by_url_prefix(_START_URL)
-    if not nodes:
-        logger.warning("measure_sprint5: no SFG nodes available to seed skills")
-        return
-
-    seed_goals = [
-        ("User can add a new todo item", "crud_operations"),
-        ("User can mark a todo as complete", "crud_operations"),
-    ]
-    for goal, domain in seed_goals:
-        skill_id = hashlib.sha256((goal + _START_URL).encode()).hexdigest()
-        step = ContractStep(
-            step_number=1,
-            action_type="fill",
-            locator='label="New Todo"',
-            input_value="Buy milk",
-            expected_state_hash=nodes[0].node_id,
-        )
-        skill = ContractSkill(
-            skill_id=skill_id,
-            goal=goal,
-            target_url=_START_URL,
-            domain=domain,
-            preconditions=["page loaded"],
-            steps=[step],
-            postconditions=["todo item appears in list"],
-            repair_operators=["SelReplace", "PreInsert", "ArgCorrect"],
-            created_at_iso=datetime.now(timezone.utc).isoformat(),
-        )
-        try:
-            await skill_store.store(skill)
-            logger.info(f"measure_sprint5: seeded skill '{goal}'")
-        except Exception as exc:
-            logger.warning(f"measure_sprint5: seed failed for '{goal}': {exc!r}")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Coverage formula
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def _compute_coverage(sfg_store: SFGStore, start_url: str) -> float:
     """
-    exploration_coverage = 1.0 when any states discovered, 0.0 on complete failure.
+    exploration_coverage = unique SFG states discovered / known reachable states.
 
-    For SPAs like TodoMVC, the BFS crawler visits max_pages but many deduplicate
-    to few unique AOM states (all hash routes share the same DOM structure).
-    All discovered states are fully analyzed by cluster→gap_analysis→hypothesis.
-    Coverage = 1.0 when the crawler succeeded, 0.0 only on total crawler failure.
+    Counts distinct node_ids (sha256 of url_path + aom_hash) discovered under
+    start_url, divided by _REACHABLE_ESTIMATE. This is a real measurement of how
+    many known TodoMVC states the crawler actually reached — NOT a sentinel.
+
+    For SPAs many hash routes deduplicate to the same AOM state, so this is
+    honestly bounded by what the crawler discovered; it can legitimately fall
+    below the 0.70 gate when the crawler reaches < 6 of the 8 known states.
     """
     nodes = sfg_store.get_nodes_by_url_prefix(start_url)
-    return 1.0 if nodes else 0.0
+    unique_node_ids = {n.node_id for n in nodes}
+    return min(1.0, len(unique_node_ids) / _REACHABLE_ESTIMATE)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -191,9 +142,10 @@ async def main() -> dict:
     skill_store = ContractSkillStore(embedding_fn=embed_fn)
 
     try:
-        # ── 1. Connect ContractSkillStore and seed if empty ─────────────────
+        # ── 1. Connect ContractSkillStore and load existing skills ──────────
+        # No seeding — skills_reused must be EARNED from real skill attribution,
+        # never injected to satisfy the ≥2 gate.
         await skill_store.connect()
-        await _seed_contract_skills(sfg_store, skill_store)
         existing_skills = await _load_existing_skills(skill_store)
 
         # ── 2. Run ExplorationPlanner ────────────────────────────────────────
@@ -208,8 +160,14 @@ async def main() -> dict:
 
         hypotheses_generated = len(hypotheses)
         exploration_coverage = _compute_coverage(sfg_store, _START_URL)
-        # skills_reused: existing skills loaded from ContractSkillStore and used in gap analysis
-        skills_reused = len(existing_skills)
+        # skills_reused: count of existing skills whose skill_id was actually
+        # attributed to a generated hypothesis via TestHypothesis.source_skill_id.
+        # The planner generates hypotheses for UNCOVERED flows (gap analysis), so
+        # this is honestly 0 unless a hypothesis is explicitly traced to a reused
+        # skill. Measured, not seeded — the ≥2 gate must be earned.
+        known_skill_ids = {s.skill_id for s in existing_skills}
+        used_skill_ids = {h.source_skill_id for h in hypotheses if h.source_skill_id}
+        skills_reused = len(used_skill_ids & known_skill_ids)
 
         # ── 3. Run HypothesisExecutor ────────────────────────────────────────
         instructor = InstructorClient()

@@ -11,11 +11,11 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import httpx
 from rich.console import Console
 
 from src.core.contract_skill import ContractSkillRepository
 from src.core.state_schema import AgentPipelineState
+from src.llm.adapter import OllamaAdapter
 
 console = Console()
 
@@ -70,19 +70,14 @@ async def healer_node(state: AgentPipelineState, config: dict) -> dict:
         f"Failure condition: {json.dumps(recovery_dump, ensure_ascii=False)}\n"
     )
 
-    payload = {
-        "model": HEALER_MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "options": {"temperature": 0.0, "num_ctx": 4096},
-    }
-    endpoint = ollama_url + "/api/generate"
-
+    # Route through OllamaAdapter (holds _inference_semaphore + VRAM guard) instead
+    # of a direct httpx call to :11434.
+    adapter = OllamaAdapter(model=HEALER_MODEL, base_url=ollama_url)
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(endpoint, json=payload)
-            resp.raise_for_status()
-            raw_text: str = resp.json().get("response", "")
+        raw_text: str = await adapter.generate(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+        )
     except Exception as exc:  # noqa: BLE001
         console.log(f"[HEALER] Ollama call failed: {exc}")
         return {
@@ -90,6 +85,8 @@ async def healer_node(state: AgentPipelineState, config: dict) -> dict:
             "execution_log": [f"[HEALER] Ollama failure → human_review: {exc}"],
             "repair_attempts": repair_attempts + 1,
         }
+    finally:
+        await adapter.close()
 
     text = _strip_fences(raw_text)
     try:

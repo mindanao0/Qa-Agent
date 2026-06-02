@@ -20,12 +20,12 @@ Requires:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import subprocess
 from pathlib import Path
 
-import httpx
 from loguru import logger
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -217,40 +217,38 @@ class ModelExporter:
         """Confirm the registered model responds and produces a test function."""
         logger.info(f"Smoke-testing {self.model_tag!r}…")
         try:
-            with httpx.Client(timeout=90.0) as client:
-                response = client.post(
-                    f"{_OLLAMA_BASE_URL}/api/generate",
-                    json={
-                        "model": self.model_tag,
-                        "prompt": _TEST_PROMPT,
-                        "stream": False,
-                        "options": {"temperature": 0.1, "num_predict": 256},
-                    },
+            reply = asyncio.run(self._smoke_generate())
+            if not reply.strip():
+                raise ValueError("Model returned an empty response")
+            if "def test_" not in reply:
+                logger.warning(
+                    f"Smoke test: response did not contain 'def test_'.\n"
+                    f"Preview: {reply[:200]!r}"
                 )
-                response.raise_for_status()
-                data = response.json()
-                reply: str = data.get("response", "") or ""
-                if not reply.strip():
-                    raise ValueError("Model returned an empty response")
-                if "def test_" not in reply:
-                    logger.warning(
-                        f"Smoke test: response did not contain 'def test_'.\n"
-                        f"Preview: {reply[:200]!r}"
-                    )
-                else:
-                    logger.info(
-                        f"Model {self.model_tag!r} registered and verified OK "
-                        f"(response_len={len(reply)})"
-                    )
-        except httpx.ConnectError:
-            logger.warning(
-                f"Could not reach Ollama at {_OLLAMA_BASE_URL} for smoke test. "
-                "Run `ollama serve` and rerun the smoke test manually."
-            )
+            else:
+                logger.info(
+                    f"Model {self.model_tag!r} registered and verified OK "
+                    f"(response_len={len(reply)})"
+                )
         except Exception as exc:
             logger.warning(
-                f"Smoke test failed (the model may still be usable): {exc}"
+                f"Smoke test failed (the model may still be usable; if Ollama is "
+                f"down, run `ollama serve` and rerun): {exc}"
             )
+
+    async def _smoke_generate(self) -> str:
+        """Run the smoke-test prompt through OllamaAdapter (no direct HTTP to :11434)."""
+        from src.llm.adapter import OllamaAdapter
+
+        adapter = OllamaAdapter(model=self.model_tag, base_url=_OLLAMA_BASE_URL)
+        try:
+            return await adapter.generate(
+                messages=[{"role": "user", "content": _TEST_PROMPT}],
+                temperature=0.1,
+                max_tokens=256,
+            )
+        finally:
+            await adapter.close()
 
     # ──────────────────────────────────────────────────────────────────────────
     # Guards

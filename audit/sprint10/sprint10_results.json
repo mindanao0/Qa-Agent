@@ -1,10 +1,12 @@
 {
   "race_scenarios_tested": 5,
-  "race_conditions_detected": 5,
+  "race_conditions_detected": 0,
   "fuzz_endpoints_tested": 7,
-  "fuzz_anomalies_found": 47,
+  "fuzz_anomalies_found": 45,
   "otel_spans_emitted": 23,
-  "audit_trail_entries": 21,
+  "audit_trail_entries": 48,
   "regression": false,
-  "sprint10_status": "PASS"
+  "race_detection_method": "semantic_hash_comparison",
+  "false_positive_risk": "low (semantic fields only) | was: high (CDP nodeId included)",
+  "sprint10_status": "FAIL"
 }

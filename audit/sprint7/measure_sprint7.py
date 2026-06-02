@@ -205,13 +205,22 @@ async def _measure_self_heal(page) -> int:
 
     triggered = 0
     try:
-        await engine.repair(skill, broken_step, "element_not_found", page)
-        triggered = 1
-        logger.info("measure_sprint7: RepairEngine.repair() completed")
+        result = await engine.repair(skill, broken_step, "element_not_found", page)
+        # RepairEngine.repair() returns a patched ContractSkill when an operator
+        # (SelReplace → ArgCorrect → PreInsert) actually produced a fix, or None
+        # when every operator is exhausted. Self-heal is only "triggered" when a
+        # real patch is produced — NOT merely because repair() was invoked.
+        if result is not None:
+            triggered = 1
+            logger.info("measure_sprint7: RepairEngine.repair() produced a patch — self-heal triggered")
+        else:
+            triggered = 0
+            logger.info("measure_sprint7: RepairEngine.repair() returned None — no self-heal")
     except Exception as exc:
-        # engine.repair() was called and raised — counts as triggered
-        triggered = 1
-        logger.info(f"measure_sprint7: RepairEngine.repair() raised (counts as triggered): {exc!r}")
+        # repair() was attempted but raised — this is a failed repair, NOT a
+        # successful self-heal.
+        triggered = 0
+        logger.info(f"measure_sprint7: RepairEngine.repair() raised — no self-heal: {exc!r}")
     finally:
         try:
             await instructor.close()

@@ -12,12 +12,12 @@ import time
 from pathlib import Path
 from typing import Any
 
-import aiohttp
 from loguru import logger
 from playwright.async_api import Page
 
 from src.agents.observer_driver.state import DriverAction
 from src.agents.observer_driver.trace_bus import TraceBus, TraceEvent
+from src.llm.adapter import OllamaAdapter
 
 DRIVER_MODEL = os.getenv("OBSERVER_DRIVER_MODEL", "qwen2.5-coder:7b-instruct-q4_K_M")
 OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -138,30 +138,24 @@ async def plan_action(
     ax_yaml = ax_path.read_text(encoding="utf-8") if ax_path.exists() else ""
     prompt = _build_prompt(ax_yaml, step, url)
 
-    endpoint = ollama_url.rstrip("/") + "/api/generate"
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "format": "json",
-        "options": {
-            "temperature": 0.0,
-            "seed": 42,
-        },
-    }
-
-    timeout = aiohttp.ClientTimeout(total=PLAN_TIMEOUT_SEC)
+    # Route through OllamaAdapter (holds _inference_semaphore + VRAM guard) instead
+    # of a direct aiohttp call to :11434. JSON mode is preserved via response_format.
+    adapter = OllamaAdapter(model=model, base_url=ollama_url)
     try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(endpoint, json=payload) as resp:
-                resp.raise_for_status()
-                body = await resp.json()
-    except aiohttp.ClientError as exc:
+        raw_response = (
+            await adapter.generate(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+                response_format={"type": "json_object"},
+            )
+        ).strip()
+    except Exception as exc:
         raise ValueError(f"Driver plan_action: Ollama call failed: {exc}") from exc
+    finally:
+        await adapter.close()
 
-    raw_response = str(body.get("response", "")).strip()
     if not raw_response:
-        raise ValueError(f"Driver plan_action: empty response from Ollama: {body!r}")
+        raise ValueError("Driver plan_action: empty response from Ollama")
 
     fields = _parse_action_payload(raw_response)
     action = DriverAction(

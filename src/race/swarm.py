@@ -117,9 +117,14 @@ class RaceConditionSwarm:
         duration_ms = (time.time() - start_time) * 1000
         filled = [r for r in results if r is not None]
         errors = [r["error"] for r in filled if r.get("error")]
-        ax_hashes = [r["ax_hash"] for r in filled if r.get("ax_hash")]
+        semantic_hashes = [r["ax_hash"] for r in filled if r.get("ax_hash")]
 
-        conflict_found = bool(errors) or (len(set(ax_hashes)) > 1 and len(ax_hashes) >= 2)
+        # Identical application state across agents → identical semantic_hash → no
+        # conflict. A genuine race surfaces either as an action error or as
+        # divergent semantic state (different hashes). Raw CDP nodeId/backendDOMNodeId
+        # are deliberately excluded (see _semantic_hash) so that nodeId drift between
+        # isolated BrowserContexts can no longer manufacture a false positive.
+        conflict_found = bool(errors) or (len(set(semantic_hashes)) > 1)
         error_summary = "; ".join(errors) if errors else None
         interleaving = [r["ts"] if r else "" for r in results]
 
@@ -132,14 +137,44 @@ class RaceConditionSwarm:
         )
 
 
+def _semantic_hash(ax_tree: dict) -> str:
+    """Hash only the SEMANTIC state of interactive nodes — role / name / checked —
+    ignoring CDP nodeId / backendDOMNodeId / childIds.
+
+    Those raw identifiers differ by construction between isolated BrowserContexts,
+    so hashing the full AX tree (the old behaviour) guaranteed a different hash for
+    every agent and therefore a false 'conflict' even when the rendered application
+    state was byte-for-byte identical. Projecting onto (role, name, checked) for the
+    interactive roles lets identical app state produce an identical hash.
+    """
+    nodes = ax_tree.get("nodes", [])
+    semantic = sorted(
+        [
+            {
+                "role": (n.get("role") or {}).get("value", ""),
+                "name": (n.get("name") or {}).get("value", ""),
+                "checked": (n.get("checked") or {}).get("value", ""),
+            }
+            for n in nodes
+            if (n.get("role") or {}).get("value", "")
+            in ("checkbox", "textbox", "button", "listitem")
+        ],
+        key=lambda x: (x["role"], x["name"]),
+    )
+    return hashlib.sha256(json.dumps(semantic, sort_keys=True).encode()).hexdigest()
+
+
 async def _ax_snapshot_hash(context: BrowserContext, page: Page) -> str:
-    """AX snapshot via CDP; returns first 16 hex chars of sha256."""
+    """Capture the AX tree via CDP and reduce it to a semantic-state hash.
+
+    Returns the sha256 of the interactive-node semantic projection (see
+    _semantic_hash) instead of a hash of the raw CDP payload.
+    """
     try:
         cdp = await context.new_cdp_session(page)
         result = await cdp.send("Accessibility.getFullAXTree")
         await cdp.detach()
-        snapshot = json.dumps(result, sort_keys=True)
-        return hashlib.sha256(snapshot.encode()).hexdigest()[:16]
+        return _semantic_hash(result)
     except Exception:
         return "snap_error"
 
@@ -174,6 +209,13 @@ async def _perform_action(page: Page, action: str) -> None:
         inp = page.get_by_placeholder("What needs to be done?")
         await inp.fill(text)
         await page.keyboard.press("Enter")
+
+    elif action == "read_only_view":
+        # Pure read — no state mutation, no localStorage write. Counting the todo
+        # list items is a read-only AOM query that returns 0 on a fresh page and
+        # never raises, so concurrent agents always observe identical state.
+        # Demonstrates that read operations cannot produce a race conflict.
+        await page.get_by_role("listitem").count()
 
     else:
         raise ValueError(f"Unknown action: {action!r}")

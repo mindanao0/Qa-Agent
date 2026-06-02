@@ -1,9 +1,9 @@
 """State Flow Graph (SFG) builder and Structured Action Knowledge Graph helpers.
 
-The engine speaks to a live Playwright Page via the accessibility tree first, with
-no DOM-screenshot fallback in this module. All long-running calls flow through
-``httpx.AsyncClient`` so that the LangGraph pipeline can compose them with the
-rest of the async stack.
+The engine speaks to a live Playwright Page via the CDP accessibility tree first,
+with no DOM-screenshot fallback in this module. LLM calls flow through
+``OllamaAdapter`` (shared inference semaphore + VRAM guard) so that the LangGraph
+pipeline can compose them with the rest of the async stack.
 """
 from __future__ import annotations
 
@@ -13,12 +13,12 @@ import re
 import time
 from typing import Any
 
-import httpx
 import networkx as nx
 from playwright.async_api import Page
 from rich.console import Console
 
 from src.core.state_schema import GUIState, SFGEdge
+from src.llm.adapter import OllamaAdapter
 
 console = Console()
 
@@ -50,7 +50,13 @@ class SFGEngine:
     async def capture_gui_state(self, page: Page) -> GUIState:
         """Snapshot the accessibility tree into a hashed ``GUIState``."""
         try:
-            ax_tree: Any = await page.accessibility.snapshot()
+            # page.accessibility was removed in Playwright ≥1.34 — use the CDP
+            # Accessibility domain (full AX tree) instead.
+            cdp = await page.context.new_cdp_session(page)
+            try:
+                ax_tree: Any = await cdp.send("Accessibility.getFullAXTree")
+            finally:
+                await cdp.detach()
         except Exception as exc:  # noqa: BLE001
             console.log(f"[SFG] accessibility snapshot failed: {exc}")
             ax_tree = None
@@ -154,26 +160,27 @@ class SFGEngine:
         self, execution_log: list[str], ollama_url: str | None = None
     ) -> str:
         """Ask Ollama to compress recent execution log into a short memory summary."""
-        endpoint = (ollama_url or self.ollama_url).rstrip("/") + "/api/generate"
         tail = execution_log[-10:] if execution_log else []
         prompt = (
             "Summarize completed sub-goals in ≤3 sentences: "
             + json.dumps(tail, ensure_ascii=False)
         )
-        payload = {
-            "model": DEFAULT_OLLAMA_MODEL,
-            "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": 0.1, "num_ctx": 2048},
-        }
+        # Route through OllamaAdapter (semaphore + VRAM guard) instead of a direct
+        # httpx call to :11434.
+        adapter = OllamaAdapter(
+            model=DEFAULT_OLLAMA_MODEL,
+            base_url=(ollama_url or self.ollama_url),
+        )
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(endpoint, json=payload)
-                resp.raise_for_status()
-                text = resp.json().get("response", "")
+            text = await adapter.generate(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+            )
         except Exception as exc:  # noqa: BLE001
             console.log(f"[SFG] memory compression failed: {exc}")
             return ""
+        finally:
+            await adapter.close()
         return text.strip()
 
     @staticmethod

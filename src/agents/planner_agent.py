@@ -6,12 +6,12 @@ non-repeating action plan.
 """
 from __future__ import annotations
 
-import httpx
 import networkx as nx
 from rich.console import Console
 
 from src.core.sfg_engine import SFGEngine
 from src.core.state_schema import AgentPipelineState
+from src.llm.adapter import OllamaAdapter
 
 console = Console()
 
@@ -65,22 +65,21 @@ async def planner_node(state: AgentPipelineState, config: dict) -> dict:
             "Generate a 3-5 step Strategy in plain English to achieve the goal."
         )
 
-    payload = {
-        "model": PLANNER_MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "options": {"temperature": temperature, "num_ctx": 4096},
-    }
-
-    endpoint = ollama_url + "/api/generate"
+    # Route through OllamaAdapter (holds _inference_semaphore + VRAM guard) instead
+    # of a direct httpx call to :11434.
+    adapter = OllamaAdapter(model=PLANNER_MODEL, base_url=ollama_url)
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(endpoint, json=payload)
-            resp.raise_for_status()
-            strategy = resp.json().get("response", "").strip()
+        strategy = (
+            await adapter.generate(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=temperature,
+            )
+        ).strip()
     except Exception as exc:  # noqa: BLE001
         console.log(f"[PLANNER] Ollama call failed: {exc}")
         strategy = "FALLBACK: navigate to the start URL and inspect the page."
+    finally:
+        await adapter.close()
 
     label = "ESCAPE" if stagnant else "PLAN"
     log_line = f"[PLANNER] {label} Strategy: {strategy[:100]}..."

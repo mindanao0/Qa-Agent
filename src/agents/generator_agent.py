@@ -9,12 +9,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import httpx
 from pydantic import ValidationError
 from rich.console import Console
 
 from src.core.contract_skill import ContractSkillRepository
 from src.core.state_schema import ActionStep, AgentPipelineState
+from src.llm.adapter import OllamaAdapter
 
 console = Console()
 
@@ -81,19 +81,14 @@ async def generator_node(state: AgentPipelineState, config: dict) -> dict:
         + f"Snapshot (trimmed): {snapshot_blurb}\n"
         + "Output the JSON array now."
     )
-    payload = {
-        "model": GENERATOR_MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "options": {"temperature": 0.1, "num_ctx": 4096},
-    }
-    endpoint = ollama_url + "/api/generate"
-
+    # Route through OllamaAdapter (holds _inference_semaphore + VRAM guard) instead
+    # of a direct httpx call to :11434.
+    adapter = OllamaAdapter(model=GENERATOR_MODEL, base_url=ollama_url)
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(endpoint, json=payload)
-            resp.raise_for_status()
-            raw_text: str = resp.json().get("response", "")
+        raw_text: str = await adapter.generate(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+        )
     except Exception as exc:  # noqa: BLE001
         console.log(f"[GENERATOR] Ollama call failed: {exc}")
         return {
@@ -101,6 +96,8 @@ async def generator_node(state: AgentPipelineState, config: dict) -> dict:
             "mode": "heal",
             "failed_step_index": 0,
         }
+    finally:
+        await adapter.close()
 
     text = _strip_fences(raw_text)
     try:

@@ -115,6 +115,178 @@ def _get_literal_test_code(spec: "FunctionSpec") -> "str | None":
             "    assert raised2\n"
         )
 
+    # ── Sprint 7 behavioral tests (real execution, not smoke) ──────────────────
+    # These classes require a live Playwright page, which the 7B model cannot
+    # reliably drive. We emit deterministic literal tests that launch Chromium
+    # headless against locally-injected fixtures (set_content / CDP) — no network,
+    # no LLM — and assert on REAL behaviour (return types, field values, state
+    # transitions), replacing the previous `assert x is not None` smoke tests.
+
+    if key == ("ShadowDOMExtractor", "extract"):
+        return import_line + "\n" + '''
+import asyncio
+from playwright.async_api import async_playwright
+
+
+def test_extract():
+    async def _run():
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
+            try:
+                page = await (await browser.new_context()).new_page()
+                await page.set_content(
+                    "<div id='host'></div>"
+                    "<script>"
+                    "const h=document.getElementById('host');"
+                    "const s=h.attachShadow({mode:'open'});"
+                    "s.innerHTML='<button>Shadow Button</button>';"
+                    "</script>"
+                )
+                nodes = await ShadowDOMExtractor().extract(page)
+            finally:
+                await browser.close()
+        return nodes
+
+    nodes = asyncio.run(_run())
+    assert isinstance(nodes, list)
+    assert len(nodes) >= 1
+    assert all(isinstance(n, ShadowNode) for n in nodes)
+    assert all(n.shadow_mode in ("open", "closed") for n in nodes)
+'''
+
+    if key == ("ShadowDOMExtractor", "merge_into_ax"):
+        return import_line + "\n" + '''
+
+def test_merge_into_ax():
+    extractor = ShadowDOMExtractor()
+    ax_nodes = [{"role": {"value": "button"}, "name": {"value": "x"}}]
+    labelled = ShadowNode(
+        node_id="1", host_role="button", shadow_mode="open",
+        children=[], ax_label="Submit",
+    )
+    merged = extractor.merge_into_ax(ax_nodes, [labelled])
+    assert merged[0]["shadow_label"] == "Submit"
+    # No-op path: shadow nodes with ax_label=None must not mutate the AX nodes.
+    none_node = ShadowNode(
+        node_id="2", host_role="button", shadow_mode="open",
+        children=[], ax_label=None,
+    )
+    assert extractor.merge_into_ax(ax_nodes, [none_node]) == ax_nodes
+'''
+
+    if key == ("HydrationGuard", "detect_framework"):
+        return import_line + "\n" + '''
+import asyncio
+from playwright.async_api import async_playwright
+
+
+def test_detect_framework():
+    async def _run():
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
+            try:
+                page = await (await browser.new_context()).new_page()
+                await page.set_content("<html><body>plain</body></html>")
+                guard = HydrationGuard()
+                blank = await guard.detect_framework(page)
+                await page.evaluate("() => { window._reactRootContainer = {}; }")
+                react = await guard.detect_framework(page)
+            finally:
+                await browser.close()
+        return blank, react
+
+    blank, react = asyncio.run(_run())
+    assert blank in ("react", "vue", "angular", "unknown")
+    assert blank == "unknown"
+    assert react == "react"
+'''
+
+    if key == ("HydrationGuard", "wait_stable"):
+        return import_line + "\n" + '''
+import asyncio
+from playwright.async_api import async_playwright
+
+
+def test_wait_stable():
+    async def _run():
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
+            try:
+                page = await (await browser.new_context()).new_page()
+                await page.set_content("<html><body><h1>stable</h1></body></html>")
+                result = await HydrationGuard().wait_stable(page, timeout_ms=3000)
+            finally:
+                await browser.close()
+        return result
+
+    result = asyncio.run(_run())
+    assert result is None
+'''
+
+    if key == ("SPARouteTracker", "attach"):
+        return import_line + "\n" + '''
+import asyncio
+from playwright.async_api import async_playwright
+
+
+def test_attach():
+    async def _run():
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
+            try:
+                page = await (await browser.new_context()).new_page()
+                await page.set_content("<html><body>spa</body></html>")
+                tracker = SPARouteTracker()
+                await tracker.attach(page)
+                await page.evaluate("() => { location.hash = '#/active'; }")
+                await page.wait_for_function(
+                    "() => (window.__spa_route_events__ || []).length > 0",
+                    timeout=5000,
+                )
+                events = await tracker.flush(page)
+            finally:
+                await browser.close()
+        return events
+
+    events = asyncio.run(_run())
+    assert isinstance(events, list)
+    assert len(events) >= 1
+    assert events[0].from_url != events[0].to_url
+'''
+
+    if key == ("SPARouteTracker", "flush"):
+        return import_line + "\n" + '''
+import asyncio
+from playwright.async_api import async_playwright
+
+
+def test_flush():
+    async def _run():
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
+            try:
+                page = await (await browser.new_context()).new_page()
+                await page.set_content("<html><body>spa</body></html>")
+                tracker = SPARouteTracker()
+                await tracker.attach(page)
+                await page.evaluate("() => { location.hash = '#/completed'; }")
+                await page.wait_for_function(
+                    "() => (window.__spa_route_events__ || []).length > 0",
+                    timeout=5000,
+                )
+                first = await tracker.flush(page)
+                second = await tracker.flush(page)
+            finally:
+                await browser.close()
+        return first, second
+
+    first, second = asyncio.run(_run())
+    assert isinstance(first, list)
+    assert len(first) >= 1
+    assert all(isinstance(e, RouteEvent) for e in first)
+    assert second == []
+'''
+
     return None
 
 
@@ -257,76 +429,9 @@ def _get_specific_call_hint(spec: "FunctionSpec") -> "tuple[str, str] | None":
             _EDGE,
         )
 
-    # ── Sprint 7: ShadowDOMExtractor ──────────────────────────────────────────
-    if key == ("ShadowDOMExtractor", "extract"):
-        return (
-            "IMPORTANT: `extract` is an ASYNC METHOD of `ShadowDOMExtractor`.\n"
-            "It requires a live Playwright page — we test the constructor and JS-fallback\n"
-            "path indirectly by checking that ShadowDOMExtractor() instantiates without error.\n"
-            "Use EXACTLY this code:\n"
-            "  extractor = ShadowDOMExtractor()\n"
-            "  assert extractor is not None\n"
-            "  assert hasattr(extractor, 'extract')",
-            _HAPPY,
-        )
-
-    if key == ("ShadowDOMExtractor", "merge_into_ax"):
-        return (
-            "IMPORTANT: `merge_into_ax` is a SYNC METHOD of `ShadowDOMExtractor`.\n"
-            "It merges shadow node ax_labels into an AX tree node list.\n"
-            "Use EXACTLY this code:\n"
-            "  extractor = ShadowDOMExtractor()\n"
-            "  ax_nodes = [{'role': {'value': 'button'}, 'name': {'value': 'Submit'}}]\n"
-            "  result = extractor.merge_into_ax(ax_nodes, [])\n"
-            "  assert result == ax_nodes",
-            _HAPPY,
-        )
-
-    # ── Sprint 7: SPARouteTracker ─────────────────────────────────────────────
-    if key == ("SPARouteTracker", "attach"):
-        return (
-            "IMPORTANT: `attach` is an ASYNC METHOD of `SPARouteTracker` that requires a live page.\n"
-            "Test that SPARouteTracker() instantiates correctly and has the attach attribute.\n"
-            "Use EXACTLY this code:\n"
-            "  tracker = SPARouteTracker()\n"
-            "  assert tracker is not None\n"
-            "  assert callable(tracker.attach)",
-            _HAPPY,
-        )
-
-    if key == ("SPARouteTracker", "flush"):
-        return (
-            "IMPORTANT: `flush` is an ASYNC METHOD of `SPARouteTracker` that requires a live page.\n"
-            "Test that SPARouteTracker() instantiates correctly and has the flush attribute.\n"
-            "Use EXACTLY this code:\n"
-            "  tracker = SPARouteTracker()\n"
-            "  assert tracker is not None\n"
-            "  assert callable(tracker.flush)",
-            _HAPPY,
-        )
-
-    # ── Sprint 7: HydrationGuard ──────────────────────────────────────────────
-    if key == ("HydrationGuard", "wait_stable"):
-        return (
-            "IMPORTANT: `wait_stable` is an ASYNC METHOD of `HydrationGuard` that requires a live page.\n"
-            "Test that HydrationGuard() instantiates correctly and has the wait_stable attribute.\n"
-            "Use EXACTLY this code:\n"
-            "  guard = HydrationGuard()\n"
-            "  assert guard is not None\n"
-            "  assert callable(guard.wait_stable)",
-            _HAPPY,
-        )
-
-    if key == ("HydrationGuard", "detect_framework"):
-        return (
-            "IMPORTANT: `detect_framework` is an ASYNC METHOD of `HydrationGuard` that requires a live page.\n"
-            "Test that HydrationGuard() instantiates correctly and has the detect_framework attribute.\n"
-            "Use EXACTLY this code:\n"
-            "  guard = HydrationGuard()\n"
-            "  assert guard is not None\n"
-            "  assert callable(guard.detect_framework)",
-            _HAPPY,
-        )
+    # Sprint 7 classes (ShadowDOMExtractor, SPARouteTracker, HydrationGuard) are
+    # handled by real behavioral literal tests in _get_literal_test_code() — they
+    # no longer emit `assert x is not None` smoke-test hints here.
 
     return None
 
