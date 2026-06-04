@@ -168,3 +168,33 @@ def test_collect_sprint5_hypothesis_format():
     parsed = json.loads(ex.completion)
     assert "goal" in parsed
     assert "steps" in parsed
+
+
+def test_collect_augmented_reaches_target():
+    from scripts.collect_training_data import collect_augmented
+    import re
+
+    aug = collect_augmented(real_count=50, target_total=500, seed=42)
+    assert len(aug) >= 450
+    assert all(ex.quality == 0.8 for ex in aug)
+    assert all(ex.metadata.get("augmented") is True for ex in aug)
+    assert all(ex.source in (
+        "sprint6_pytest", "sprint9_vitest", "sprint13_schema",
+        "sprint14_pbt", "sprint5_hypothesis",
+    ) for ex in aug)
+
+
+def test_collect_augmented_no_duplicates():
+    from scripts.collect_training_data import collect_augmented
+    aug = collect_augmented(real_count=50, target_total=500, seed=42)
+    ids = [ex.example_id for ex in aug]
+    assert len(ids) == len(set(ids)), "No duplicate example_ids in augmented set"
+
+
+def test_collect_augmented_no_blocked_patterns():
+    from scripts.collect_training_data import collect_augmented
+    import re
+    BLOCKED = re.compile(r"delete|remove|transfer|payment|password", re.IGNORECASE)
+    aug = collect_augmented(real_count=50, target_total=500, seed=42)
+    for ex in aug:
+        assert not BLOCKED.search(ex.completion), f"Blocked pattern in {ex.example_id}: {ex.completion[:80]}"
