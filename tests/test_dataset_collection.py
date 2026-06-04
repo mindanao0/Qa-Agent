@@ -35,3 +35,24 @@ def test_collect_sprint9_returns_training_examples(tmp_path):
     assert ex.metadata["sprint"] == 9
     assert ex.metadata["func_name"] == "sum"
     assert ex.metadata["test_type"] == "vitest"
+
+
+def test_collect_sprint6_filters_quality():
+    """Verify quality=1.0 assigned and example_id is set correctly."""
+    from scripts.collect_training_data import TrainingExample, _make_id
+
+    prompt = "Generate a pytest test for the following Python function:\nfunc_name=foo"
+    completion = "def test_foo():\n    assert foo() is None"
+    ex = TrainingExample(
+        example_id=_make_id(prompt, completion),
+        source="sprint6_pytest",
+        prompt=prompt,
+        completion=completion,
+        quality=1.0,
+        metadata={"sprint": 6, "func_id": "abc123", "func_name": "foo", "test_type": "happy_path"},
+    )
+    assert ex.quality == 1.0
+    assert ex.source == "sprint6_pytest"
+    assert len(ex.example_id) == 10
+    assert ex.metadata["sprint"] == 6
+    assert ex.metadata["func_name"] == "foo"

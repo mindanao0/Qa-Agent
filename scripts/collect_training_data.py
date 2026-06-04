@@ -150,9 +150,78 @@ def collect_sprint9() -> list[TrainingExample]:
     return _collect_sprint9_from_paths(_JS_TESTS_DIR, _JS_TARGETS_DIR)
 
 
+_SPRINT6_TARGET_MODULES = [
+    _PROJECT_ROOT / "src" / "contractskill" / "sfg.py",
+    _PROJECT_ROOT / "src" / "contractskill" / "crawler.py",
+    _PROJECT_ROOT / "src" / "contractskill" / "compiler.py",
+    _PROJECT_ROOT / "src" / "contractskill" / "repair.py",
+    _PROJECT_ROOT / "src" / "explorer" / "hypothesis.py",
+]
+
+
 def collect_sprint6() -> list[TrainingExample]:
-    """Mine src/codetest/generator.py generation logs for pytest-passing pairs."""
-    return []
+    """Re-run PytestGenerator on Sprint 6 target modules, quality=1.0 for all."""
+    try:
+        from src.codetest.ast_parser import parse_module
+        from src.codetest.generator import PytestGenerator, _build_prompt
+    except ImportError as exc:
+        print(f"collect_sprint6: import failed — {exc}")
+        return []
+
+    async def _run() -> list[TrainingExample]:
+        all_specs = []
+        for mod_path in _SPRINT6_TARGET_MODULES:
+            if not mod_path.exists():
+                print(f"collect_sprint6: module not found — {mod_path}")
+                continue
+            try:
+                specs = parse_module(mod_path)
+                all_specs.extend(specs)
+            except Exception as exc:
+                print(f"collect_sprint6: parse failed for {mod_path}: {exc!r}")
+
+        if not all_specs:
+            return []
+
+        generator = PytestGenerator()
+        try:
+            tests = await generator.generate(all_specs)
+        except Exception as exc:
+            print(f"collect_sprint6: generation failed — {exc!r}")
+            return []
+
+        specs_by_func_id = {s.func_id: s for s in all_specs}
+        examples = []
+        for test in tests:
+            spec = specs_by_func_id.get(test.func_id)
+            if spec is None:
+                continue
+            prompt = (
+                "Generate a pytest test for the following Python function:\n"
+                + _build_prompt(spec)
+            )
+            examples.append(
+                TrainingExample(
+                    example_id=_make_id(prompt, test.test_code),
+                    source="sprint6_pytest",
+                    prompt=prompt,
+                    completion=test.test_code,
+                    quality=1.0,
+                    metadata={
+                        "sprint": 6,
+                        "func_id": test.func_id,
+                        "func_name": spec.func_name,
+                        "test_type": test.test_type,
+                    },
+                )
+            )
+        return examples
+
+    try:
+        return asyncio.run(_run())
+    except Exception as exc:
+        print(f"collect_sprint6: async run failed — {exc!r}")
+        return []
 
 
 def collect_sprint13() -> list[TrainingExample]:
