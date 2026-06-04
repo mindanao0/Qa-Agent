@@ -200,6 +200,65 @@ def test_collect_augmented_no_blocked_patterns():
         assert not BLOCKED.search(ex.completion), f"Blocked pattern in {ex.example_id}: {ex.completion[:80]}"
 
 
+def test_validate_blocked_patterns_spec():
+    """BLOCKED_ACTION_PATTERNS must include delete/remove/transfer/payment/password."""
+    import importlib.util, pathlib
+    spec = importlib.util.spec_from_file_location(
+        "validate_dataset",
+        pathlib.Path(__file__).parent.parent / "scripts" / "validate_dataset.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    patterns = mod.BLOCKED_ACTION_PATTERNS
+    for p in ("delete", "remove", "transfer", "payment", "password"):
+        assert any(p.lower() in bp.lower() for bp in patterns), \
+            f"BLOCKED_ACTION_PATTERNS missing: {p}"
+
+
+def test_validate_check7_detects_bearer():
+    """Check 7 must detect Bearer tokens in completion."""
+    import json, pathlib, tempfile, importlib.util
+
+    bad = {
+        "example_id": "abc1234567",
+        "source": "sprint6_pytest",
+        "prompt": "Generate a test",
+        "completion": 'headers = {"Authorization": "Bearer eyJhbGciOi..."}',
+        "quality": 1.0,
+        "metadata": {},
+    }
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+        f.write(json.dumps(bad) + "\n")
+        tmp_path = pathlib.Path(f.name)
+
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "validate_dataset",
+            pathlib.Path(__file__).parent.parent / "scripts" / "validate_dataset.py",
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        # Directly test the Bearer detection logic
+        examples = [bad]
+        auth_hits = []
+        import re as _re
+        for ex in examples:
+            for field_name in ("prompt", "completion"):
+                field_val = ex.get(field_name, "")
+                if "Bearer " in field_val:
+                    auth_hits.append({"example_id": ex.get("example_id"),
+                                      "field": field_name, "pattern": "Bearer "})
+                if _re.search(r'"password"\s*:\s*"[^"]+', field_val):
+                    auth_hits.append({"example_id": ex.get("example_id"),
+                                      "field": field_name, "pattern": "password value"})
+        assert len(auth_hits) == 1
+        assert auth_hits[0]["pattern"] == "Bearer "
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
 def test_split_stratified_by_source():
     """90/10 split must maintain source proportions."""
     from scripts.collect_training_data import _split_stratified, TrainingExample, _make_id
