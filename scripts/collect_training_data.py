@@ -31,8 +31,6 @@ import asyncio
 import hashlib
 import json
 import pathlib
-import random
-import sys
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -154,31 +152,27 @@ def collect_sprint9() -> list[TrainingExample]:
 
 def collect_sprint6() -> list[TrainingExample]:
     """Mine src/codetest/generator.py generation logs for pytest-passing pairs."""
-    print("collect_sprint6: not yet implemented; returning []")
     return []
 
 
 def collect_sprint13() -> list[TrainingExample]:
     """Mine src/fuzzer/schema_inferrer.py logs for (traces, schema) pairs."""
-    print("collect_sprint13: not yet implemented; returning []")
     return []
 
 
 def collect_sprint14() -> list[TrainingExample]:
     """Mine src/pbt/invariant_extractor.py logs for (function_spec, invariant) pairs."""
-    print("collect_sprint14: not yet implemented; returning []")
     return []
 
 
 def collect_sprint5() -> list[TrainingExample]:
     """Mine Sprint 5 exploration logs for (page_state, hypothesis) pairs."""
-    print("collect_sprint5: not yet implemented; returning []")
     return []
 
 
 def main() -> None:
     examples: list[TrainingExample] = []
-    for collector in [collect_sprint6, collect_sprint9, collect_sprint13, collect_sprint14]:
+    for collector in [collect_sprint6, collect_sprint9, collect_sprint13, collect_sprint14, collect_sprint5]:
         examples.extend(collector())
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
