@@ -32,3 +32,6 @@ def test_collect_sprint9_returns_training_examples(tmp_path):
     assert "vitest" in ex.completion.lower() or "describe" in ex.completion.lower()
     assert ex.quality == 1.0
     assert len(ex.example_id) == 10
+    assert ex.metadata["sprint"] == 9
+    assert ex.metadata["func_name"] == "sum"
+    assert ex.metadata["test_type"] == "vitest"

@@ -66,7 +66,7 @@ def _collect_sprint9_from_paths(
     """Read .test.ts files from js_tests_dir; parse specs from js_targets_dir; reconstruct prompts."""
     try:
         from src.codetest.js_ast_parser import JSASTParser
-        from src.codetest.js_generator import _build_prompt
+        from src.codetest.js_generator import _build_prompt as js_build_prompt
     except ImportError as exc:
         print(f"collect_sprint9: ImportError — {exc}; returning []")
         return []
@@ -109,7 +109,7 @@ def _collect_sprint9_from_paths(
 
         # Read the completion (file contents)
         try:
-            completion = test_file.read_text(encoding="utf-8")
+            completion = test_file.read_text(encoding="utf-8").strip()
         except Exception as exc:
             print(f"collect_sprint9: cannot read {test_file}: {exc}; skipping")
             continue
@@ -118,7 +118,7 @@ def _collect_sprint9_from_paths(
         spec = spec_map.get(func_name)
         if spec is not None:
             try:
-                prompt_body = _build_prompt(spec)
+                prompt_body = js_build_prompt(spec)
             except Exception as exc:
                 print(f"collect_sprint9: _build_prompt failed for {func_name}: {exc}; using fallback")
                 prompt_body = f"Function: {func_name}"
