@@ -291,9 +291,83 @@ def collect_sprint13() -> list[TrainingExample]:
         return []
 
 
+_SPRINT14_TARGET_MODULES = [
+    _PROJECT_ROOT / "src" / "fuzzer" / "vector_generator.py",
+    _PROJECT_ROOT / "src" / "explorer" / "planner.py",
+]
+
+_SPRINT14_PASSED = {
+    "_words_relate", "_meaningful_words", "_clean", "base_vectors_for",
+    "normalize_endpoint", "infer_field_type",
+}
+
+
 def collect_sprint14() -> list[TrainingExample]:
-    """Mine src/pbt/invariant_extractor.py logs for (function_spec, invariant) pairs."""
-    return []
+    """Re-run InvariantExtractor on Sprint 14 target functions.
+
+    quality=1.0 for known-passing functions, 0.5 for others.
+    """
+    try:
+        from src.codetest.ast_parser import parse_module
+        from src.pbt.invariant_extractor import InvariantExtractor
+    except ImportError as exc:
+        print(f"collect_sprint14: import failed — {exc}")
+        return []
+
+    async def _run() -> list[TrainingExample]:
+        all_specs = []
+        for mod_path in _SPRINT14_TARGET_MODULES:
+            if not mod_path.exists():
+                continue
+            try:
+                all_specs.extend(parse_module(mod_path))
+            except Exception as exc:
+                print(f"collect_sprint14: parse failed for {mod_path}: {exc!r}")
+
+        if not all_specs:
+            return []
+
+        extractor = InvariantExtractor()
+        sem = asyncio.Semaphore(1)
+        try:
+            invariants = await extractor.extract_from_functions(all_specs, sem)
+        except Exception as exc:
+            print(f"collect_sprint14: extraction failed — {exc!r}")
+            return []
+        finally:
+            await extractor.aclose()
+
+        specs_by_name = {s.func_name: s for s in all_specs}
+        examples = []
+        for inv in invariants:
+            spec = specs_by_name.get(inv.source_id)
+            spec_dict = spec.model_dump() if spec else {"func_name": inv.source_id}
+            func_name = inv.source_id
+            quality = 1.0 if func_name in _SPRINT14_PASSED else 0.5
+            prompt = f"Extract a testable invariant from this function:\n{json.dumps(spec_dict, indent=2)}"
+            completion = inv.model_dump_json(indent=2)
+            examples.append(
+                TrainingExample(
+                    example_id=_make_id(prompt, completion),
+                    source="sprint14_pbt",
+                    prompt=prompt,
+                    completion=completion,
+                    quality=quality,
+                    metadata={
+                        "sprint": 14,
+                        "func_name": func_name,
+                        "property_type": inv.property_type,
+                        "invariant_id": inv.invariant_id,
+                    },
+                )
+            )
+        return examples
+
+    try:
+        return asyncio.run(_run())
+    except Exception as exc:
+        print(f"collect_sprint14: async run failed — {exc!r}")
+        return []
 
 
 def collect_sprint5() -> list[TrainingExample]:

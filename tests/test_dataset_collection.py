@@ -88,3 +88,47 @@ def test_collect_sprint13_prompt_format():
     assert ex.quality == 1.0
     assert ex.metadata["sprint"] == 13
     assert ex.metadata["endpoint"] == "/api/articles"
+
+
+def test_collect_sprint14_quality_values():
+    """Invariant examples must have quality 0.5 or 1.0 based on known-passing set."""
+    import json
+    from scripts.collect_training_data import TrainingExample, _make_id, _SPRINT14_PASSED
+
+    spec_dict = {"func_name": "_words_relate", "func_id": "abc123", "module_path": "src/fuzzer/vector_generator.py",
+                 "return_type": "bool", "args": [], "docstring": None, "decorators": [], "complexity": 1,
+                 "class_name": None, "is_async": False}
+    inv_dict = {"invariant_id": "abc1234567", "source": "function",
+                "source_id": "_words_relate", "description": "commutative",
+                "property_type": "commutative", "hypothesis_strategy": "st.text()"}
+
+    prompt = f"Extract a testable invariant from this function:\n{json.dumps(spec_dict, indent=2)}"
+    completion = json.dumps(inv_dict, indent=2)
+
+    # Known-passing function → quality=1.0
+    ex1 = TrainingExample(
+        example_id=_make_id(prompt, completion),
+        source="sprint14_pbt",
+        prompt=prompt,
+        completion=completion,
+        quality=1.0,
+        metadata={"sprint": 14, "func_name": "_words_relate",
+                  "property_type": "commutative", "invariant_id": "abc1234567"},
+    )
+    assert ex1.quality == 1.0
+    assert "_words_relate" in _SPRINT14_PASSED
+
+    # Unknown function → quality=0.5
+    ex2 = TrainingExample(
+        example_id=_make_id(prompt + "x", completion),
+        source="sprint14_pbt",
+        prompt=prompt,
+        completion=completion,
+        quality=0.5,
+        metadata={"sprint": 14, "func_name": "unknown_func",
+                  "property_type": "commutative", "invariant_id": "def9876543"},
+    )
+    assert ex2.quality == 0.5
+    assert "unknown_func" not in _SPRINT14_PASSED
+    assert ex2.source == "sprint14_pbt"
+    assert ex2.metadata["sprint"] == 14
