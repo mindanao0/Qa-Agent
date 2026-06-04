@@ -370,9 +370,76 @@ def collect_sprint14() -> list[TrainingExample]:
         return []
 
 
+_TODOMVC_URL = "https://demo.playwright.dev/todomvc/#/"
+
+
 def collect_sprint5() -> list[TrainingExample]:
-    """Mine Sprint 5 exploration logs for (page_state, hypothesis) pairs."""
-    return []
+    """Re-run ExplorationPlanner on TodoMVC, collect (ax_summary, hypothesis) pairs.
+
+    Requires live browser + Ollama. Falls back gracefully on failure.
+    quality=1.0 for all generated hypotheses.
+    """
+    try:
+        from playwright.async_api import async_playwright
+        from src.contractskill.sfg import SFGStore
+        from src.explorer.planner import ExplorationPlanner
+        from src.perception.grounder import Grounder
+    except ImportError as exc:
+        print(f"collect_sprint5: import failed — {exc}")
+        return []
+
+    async def _run() -> list[TrainingExample]:
+        import tempfile
+
+        sfg_dir = pathlib.Path(tempfile.mkdtemp(prefix="dataset_sprint5_"))
+        sfg_store = SFGStore(db_path=sfg_dir / "sfg.db")
+        planner = ExplorationPlanner()
+        grounder = Grounder()
+
+        hypotheses = await planner.plan(
+            start_url=_TODOMVC_URL,
+            sfg_store=sfg_store,
+            existing_skills=[],
+        )
+
+        ax_summary = f"TodoMVC at {_TODOMVC_URL}"
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
+            try:
+                page = await browser.new_page()
+                await page.goto(_TODOMVC_URL, wait_until="domcontentloaded")
+                pam = await grounder.ground(page)
+                ax_summary = pam.content[:500]
+            except Exception as exc:
+                print(f"collect_sprint5: grounder failed — {exc!r}")
+            finally:
+                await browser.close()
+
+        examples = []
+        for hyp in hypotheses:
+            prompt = f"Generate test hypotheses for this web app state:\n{ax_summary}"
+            completion = hyp.model_dump_json(indent=2)
+            examples.append(
+                TrainingExample(
+                    example_id=_make_id(prompt, completion),
+                    source="sprint5_hypothesis",
+                    prompt=prompt,
+                    completion=completion,
+                    quality=1.0,
+                    metadata={
+                        "sprint": 5,
+                        "hypothesis_id": hyp.hypothesis_id,
+                        "goal": hyp.goal,
+                    },
+                )
+            )
+        return examples
+
+    try:
+        return asyncio.run(_run())
+    except Exception as exc:
+        print(f"collect_sprint5: async run failed — {exc!r}")
+        return []
 
 
 def main() -> None:

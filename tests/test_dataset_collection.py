@@ -132,3 +132,39 @@ def test_collect_sprint14_quality_values():
     assert "unknown_func" not in _SPRINT14_PASSED
     assert ex2.source == "sprint14_pbt"
     assert ex2.metadata["sprint"] == 14
+
+
+def test_collect_sprint5_hypothesis_format():
+    """Hypothesis completions must be valid JSON with required fields."""
+    import json
+    from scripts.collect_training_data import TrainingExample, _make_id
+
+    ax_summary = "TodoMVC app: 0 todos, filter=All, no completed"
+    hyp = {
+        "hypothesis_id": "abc123def456",
+        "goal": "Add a todo item",
+        "start_url": "https://demo.playwright.dev/todomvc/#/",
+        "preconditions": [],
+        "steps": ["Fill 'What needs to be done?' with 'Buy milk'", "Press Enter"],
+        "expected_outcome": "Todo 'Buy milk' appears in list",
+        "source_skill_id": None,
+        "confidence": 0.0,
+    }
+    prompt = f"Generate test hypotheses for this web app state:\n{ax_summary}"
+    completion = json.dumps(hyp, indent=2)
+    ex = TrainingExample(
+        example_id=_make_id(prompt, completion),
+        source="sprint5_hypothesis",
+        prompt=prompt,
+        completion=completion,
+        quality=1.0,
+        metadata={"sprint": 5, "hypothesis_id": hyp["hypothesis_id"], "goal": hyp["goal"]},
+    )
+    assert ex.source == "sprint5_hypothesis"
+    assert "web app state" in ex.prompt
+    assert ex.quality == 1.0
+    assert ex.metadata["sprint"] == 5
+    assert ex.metadata["goal"] == "Add a todo item"
+    parsed = json.loads(ex.completion)
+    assert "goal" in parsed
+    assert "steps" in parsed
