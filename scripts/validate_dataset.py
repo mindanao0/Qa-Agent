@@ -78,7 +78,7 @@ def main() -> None:
     for ex in examples:
         completion = ex.get("completion", "")
         for pattern in BLOCKED_ACTION_PATTERNS:
-            if pattern in completion:
+            if pattern.lower() in completion.lower():
                 blocked_hits.append({"example_id": ex.get("example_id"), "pattern": pattern})
     checks["no_blocked_patterns"] = len(blocked_hits) == 0
     details["blocked_pattern_hits"] = blocked_hits

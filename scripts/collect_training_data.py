@@ -542,8 +542,6 @@ def collect_augmented(
     Cycles through 5 template types to maintain source diversity.
     quality=0.8, metadata augmented=True. No Ollama required.
     """
-    import json as _json
-
     needed = max(0, target_total - real_count)
     if needed == 0:
         return []
@@ -595,8 +593,8 @@ def collect_augmented(
                        "auth_present": False, "captured_at": 0.0}]
             schema_obj = {**schema, "endpoint": ep, "method": method,
                           "constraints": [desc], "coverage_score": 1, "is_candidate": True}
-            prompt = f"Infer an OpenAPI schema from these API traces:\n{_json.dumps(traces, indent=2)}"
-            completion = _json.dumps(schema_obj, indent=2)
+            prompt = f"Infer an OpenAPI schema from these API traces:\n{json.dumps(traces, indent=2)}"
+            completion = json.dumps(schema_obj, indent=2)
             yield "sprint13_schema", prompt, completion
 
     def _invariant_gen():
@@ -607,8 +605,8 @@ def collect_augmented(
             inv = {"invariant_id": f"aug_{i:06x}", "source": "function", "source_id": fn,
                    "description": desc, "property_type": prop_type,
                    "hypothesis_strategy": "st.integers()"}
-            prompt = f"Extract a testable invariant from this function:\n{_json.dumps(spec_dict, indent=2)}"
-            completion = _json.dumps(inv, indent=2)
+            prompt = f"Extract a testable invariant from this function:\n{json.dumps(spec_dict, indent=2)}"
+            completion = json.dumps(inv, indent=2)
             yield "sprint14_pbt", prompt, completion
 
     def _hypothesis_gen():
@@ -621,7 +619,7 @@ def collect_augmented(
                    "preconditions": [], "steps": steps, "expected_outcome": outcome,
                    "source_skill_id": None, "confidence": 0.0}
             prompt = f"Generate test hypotheses for this web app state:\n{ax}"
-            completion = _json.dumps(hyp, indent=2)
+            completion = json.dumps(hyp, indent=2)
             yield "sprint5_hypothesis", prompt, completion
 
     generators = [_pytest_gen(), _vitest_gen(), _schema_gen(), _invariant_gen(), _hypothesis_gen()]
@@ -630,10 +628,7 @@ def collect_augmented(
 
     while len(examples) < needed:
         gen = next(gen_cycle)
-        try:
-            source, prompt, completion = next(gen)
-        except StopIteration:
-            break
+        source, prompt, completion = next(gen)
         ex_id = _make_id(prompt + str(len(examples)), completion)
         if ex_id in seen_ids:
             continue

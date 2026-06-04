@@ -284,3 +284,46 @@ def test_split_stratified_by_source():
     train_s6 = sum(1 for ex in train if ex.source == "sprint6_pytest")
     assert val_s6 >= 1
     assert train_s6 >= 1
+
+
+def test_sanitize_examples_drops_blocked_and_redacts_password():
+    """_sanitize_examples must drop completions with blocked patterns and redact password prompts."""
+    import json
+    from scripts.collect_training_data import _sanitize_examples, TrainingExample, _make_id
+
+    # Example with blocked pattern in completion — should be dropped
+    p1, c1 = "prompt 1", "def test_delete_user(): assert user.delete() is None"
+    ex_blocked = TrainingExample(
+        example_id=_make_id(p1, c1), source="sprint6_pytest",
+        prompt=p1, completion=c1, quality=1.0, metadata={"sprint": 6}
+    )
+
+    # Example with password value in prompt — should be redacted
+    password_prompt = 'Login with {"username": "user", "password": "secret123"}'
+    p2, c2 = password_prompt, "def test_login(): assert login() is True"
+    ex_password = TrainingExample(
+        example_id=_make_id(p2, c2), source="sprint6_pytest",
+        prompt=password_prompt, completion=c2, quality=1.0, metadata={"sprint": 6}
+    )
+
+    # Clean example — should pass through unchanged
+    p3, c3 = "Generate a test for add()", "def test_add(): assert add(1,2) == 3"
+    ex_clean = TrainingExample(
+        example_id=_make_id(p3, c3), source="sprint6_pytest",
+        prompt=p3, completion=c3, quality=1.0, metadata={"sprint": 6}
+    )
+
+    result = _sanitize_examples([ex_blocked, ex_password, ex_clean])
+
+    # Blocked example should be removed
+    assert not any(ex.completion == c1 for ex in result), "Blocked completion must be dropped"
+
+    # Password example should have prompt redacted (password value replaced with null)
+    password_examples = [ex for ex in result if "add(1,2)" not in ex.completion]
+    assert len(password_examples) == 1
+    assert "secret123" not in password_examples[0].prompt, "Password value must be redacted"
+    assert '"password"' in password_examples[0].prompt, "Key should remain after redaction"
+
+    # Clean example must pass through unchanged
+    assert any(ex.completion == c3 for ex in result), "Clean example must be preserved"
+    assert len(result) == 2  # blocked dropped, password redacted+kept, clean kept
