@@ -1,0 +1,27 @@
+{
+  "passed": true,
+  "checks": {
+    "min_500_examples": true,
+    "mean_quality_gte_0_70": true,
+    "source_diversity_gte_3": true,
+    "no_duplicate_ids": true,
+    "no_empty_pairs": true,
+    "no_blocked_patterns": true,
+    "no_auth_or_password_values": true
+  },
+  "details": {
+    "total_examples": 500,
+    "mean_quality": 0.8148,
+    "distinct_sources": [
+      "sprint13_schema",
+      "sprint14_pbt",
+      "sprint5_hypothesis",
+      "sprint6_pytest",
+      "sprint9_vitest"
+    ],
+    "duplicate_count": 0,
+    "empty_pairs": 0,
+    "blocked_pattern_hits": [],
+    "auth_hits": []
+  }
+}

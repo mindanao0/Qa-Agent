@@ -33,6 +33,7 @@ import itertools
 import json
 import pathlib
 import random
+import re
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -684,6 +685,49 @@ def _write_jsonl(path: pathlib.Path, examples: list[TrainingExample]) -> None:
             f.write(ex.model_dump_json() + "\n")
 
 
+_BLOCKED_PATTERNS = ["delete", "remove", "transfer", "payment", "password"]
+_PASSWORD_FIELD_RE = re.compile(r'"password"\s*:\s*"[^"]*"')
+
+
+def _sanitize_examples(
+    examples: list[TrainingExample],
+) -> list[TrainingExample]:
+    """Drop examples with blocked patterns in completion; redact password fields in prompts.
+
+    Rules:
+      - If completion contains any blocked pattern (case-insensitive substring) → drop.
+      - If prompt contains "password": "..." (any value, incl. __REDACTED__) → replace with
+        "password": null so the auth-check regex won't match.
+    Returns the sanitized list (may be shorter than input).
+    """
+    result: list[TrainingExample] = []
+    for ex in examples:
+        # Check completion for blocked patterns
+        comp_lower = ex.completion.lower()
+        if any(p in comp_lower for p in _BLOCKED_PATTERNS):
+            continue  # drop this example
+
+        # Redact "password": "..." in prompt (replace with null so regex won't match)
+        clean_prompt = ex.prompt
+        if '"password"' in clean_prompt:
+            clean_prompt = _PASSWORD_FIELD_RE.sub('"password": null', clean_prompt)
+
+        if clean_prompt != ex.prompt:
+            # Rebuild with sanitized prompt and new id
+            new_id = _make_id(clean_prompt, ex.completion)
+            ex = TrainingExample(
+                example_id=new_id,
+                source=ex.source,
+                prompt=clean_prompt,
+                completion=ex.completion,
+                quality=ex.quality,
+                metadata=ex.metadata,
+            )
+
+        result.append(ex)
+    return result
+
+
 def main() -> None:
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
@@ -711,6 +755,9 @@ def main() -> None:
     real = s6 + s9 + s13 + s14 + s5
     # Filter: skip examples with quality < 0.50
     real = [ex for ex in real if ex.quality >= 0.50]
+
+    # Sanitize: drop blocked-pattern completions, redact password fields in prompts
+    real = _sanitize_examples(real)
 
     # Deduplicate by example_id
     seen: set[str] = set()
