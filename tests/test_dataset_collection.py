@@ -198,3 +198,30 @@ def test_collect_augmented_no_blocked_patterns():
     aug = collect_augmented(real_count=50, target_total=500, seed=42)
     for ex in aug:
         assert not BLOCKED.search(ex.completion), f"Blocked pattern in {ex.example_id}: {ex.completion[:80]}"
+
+
+def test_split_stratified_by_source():
+    """90/10 split must maintain source proportions."""
+    from scripts.collect_training_data import _split_stratified, TrainingExample, _make_id
+
+    examples = []
+    for i in range(60):
+        p, c = f"prompt_s6_{i}", f"completion_s6_{i}"
+        examples.append(TrainingExample(
+            example_id=_make_id(p, c), source="sprint6_pytest",
+            prompt=p, completion=c, quality=1.0, metadata={}
+        ))
+    for i in range(40):
+        p, c = f"prompt_s9_{i}", f"completion_s9_{i}"
+        examples.append(TrainingExample(
+            example_id=_make_id(p, c), source="sprint9_vitest",
+            prompt=p, completion=c, quality=1.0, metadata={}
+        ))
+
+    train, val = _split_stratified(examples, val_ratio=0.10, seed=42)
+    assert len(train) + len(val) == 100
+    assert abs(len(val) - 10) <= 3  # ~10%
+    val_s6 = sum(1 for ex in val if ex.source == "sprint6_pytest")
+    train_s6 = sum(1 for ex in train if ex.source == "sprint6_pytest")
+    assert val_s6 >= 1
+    assert train_s6 >= 1

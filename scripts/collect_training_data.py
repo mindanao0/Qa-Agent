@@ -652,18 +652,121 @@ def collect_augmented(
     return examples
 
 
-def main() -> None:
-    examples: list[TrainingExample] = []
-    for collector in [collect_sprint6, collect_sprint9, collect_sprint13, collect_sprint14, collect_sprint5]:
-        examples.extend(collector())
+def _split_stratified(
+    examples: list[TrainingExample],
+    val_ratio: float = 0.10,
+    seed: int = 42,
+) -> tuple[list[TrainingExample], list[TrainingExample]]:
+    """Stratified 90/10 split by source, shuffled with seed=42."""
+    rng = random.Random(seed)
+    by_source: dict[str, list[TrainingExample]] = {}
+    for ex in examples:
+        by_source.setdefault(ex.source, []).append(ex)
 
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with OUTPUT_PATH.open("w", encoding="utf-8") as f:
+    train: list[TrainingExample] = []
+    val: list[TrainingExample] = []
+
+    for source, group in by_source.items():
+        rng.shuffle(group)
+        n_val = max(1, round(len(group) * val_ratio))
+        val.extend(group[:n_val])
+        train.extend(group[n_val:])
+
+    rng.shuffle(train)
+    rng.shuffle(val)
+    return train, val
+
+
+def _write_jsonl(path: pathlib.Path, examples: list[TrainingExample]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
         for ex in examples:
             f.write(ex.model_dump_json() + "\n")
 
-    print(f"Collected {len(examples)} examples → {OUTPUT_PATH}")
-    print("Run scripts/validate_dataset.py to check quality before fine-tuning.")
+
+def main() -> None:
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    # Step 1: Collect real examples from all 5 sources
+    print("Collecting Sprint 9 (Vitest)...")
+    s9 = collect_sprint9()
+    print(f"  sprint9_vitest: {len(s9)}")
+
+    print("Collecting Sprint 6 (Pytest)...")
+    s6 = collect_sprint6()
+    print(f"  sprint6_pytest: {len(s6)}")
+
+    print("Collecting Sprint 13 (Schema)...")
+    s13 = collect_sprint13()
+    print(f"  sprint13_schema: {len(s13)}")
+
+    print("Collecting Sprint 14 (PBT)...")
+    s14 = collect_sprint14()
+    print(f"  sprint14_pbt: {len(s14)}")
+
+    print("Collecting Sprint 5 (Hypothesis)...")
+    s5 = collect_sprint5()
+    print(f"  sprint5_hypothesis: {len(s5)}")
+
+    real = s6 + s9 + s13 + s14 + s5
+    # Filter: skip examples with quality < 0.50
+    real = [ex for ex in real if ex.quality >= 0.50]
+
+    # Deduplicate by example_id
+    seen: set[str] = set()
+    deduped: list[TrainingExample] = []
+    for ex in real:
+        if ex.example_id not in seen:
+            seen.add(ex.example_id)
+            deduped.append(ex)
+    real = deduped
+
+    # Step 2: Augment to reach 500
+    print(f"Augmenting (real so far: {len(real)})...")
+    aug = collect_augmented(real_count=len(real), target_total=500, seed=42)
+    aug = [ex for ex in aug if ex.quality >= 0.50]
+    for ex in aug:
+        if ex.example_id not in seen:
+            seen.add(ex.example_id)
+            deduped.append(ex)
+    all_examples = deduped
+    aug_count = sum(1 for ex in all_examples if ex.metadata.get("augmented"))
+    print(f"  augmented: {aug_count}")
+
+    # Step 3: Shuffle with seed=42
+    rng = random.Random(42)
+    rng.shuffle(all_examples)
+
+    # Step 4: Write raw JSONL
+    _write_jsonl(OUTPUT_PATH, all_examples)
+
+    # Step 5: Split train/val
+    train, val = _split_stratified(all_examples, val_ratio=0.10, seed=42)
+    _train_path = OUTPUT_PATH.parent / "train.jsonl"
+    _val_path = OUTPUT_PATH.parent / "val.jsonl"
+    _write_jsonl(_train_path, train)
+    _write_jsonl(_val_path, val)
+
+    # Step 6: Print DATASET REPORT
+    mean_quality = sum(ex.quality for ex in all_examples) / len(all_examples) if all_examples else 0.0
+    by_source: dict[str, int] = {}
+    for ex in all_examples:
+        by_source[ex.source] = by_source.get(ex.source, 0) + 1
+
+    print("\nDATASET COLLECTION REPORT")
+    print("=========================")
+    print(f"total_examples:     {len(all_examples)}")
+    print("sources:")
+    for src in ["sprint6_pytest", "sprint9_vitest", "sprint13_schema",
+                "sprint14_pbt", "sprint5_hypothesis"]:
+        print(f"  {src}: {by_source.get(src, 0)}")
+    print(f"  augmented:        {aug_count}")
+    print(f"mean_quality:       {mean_quality:.4f}")
+    print(f"train_split:        {len(train)}")
+    print(f"val_split:          {len(val)}")
+    ready = len(all_examples) >= 500 and mean_quality >= 0.70
+    print(f"validation:         {'PASS' if ready else 'FAIL'}")
+    print(f"ready_for_finetune: {str(ready).lower()}")
 
 
 if __name__ == "__main__":
