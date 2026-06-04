@@ -91,12 +91,7 @@ def _collect_sprint9_from_paths(
 
     examples: list[TrainingExample] = []
     for test_file in test_files:
-        # Extract func_name from filename:  test_test_sum.test.ts → stem=test_test_sum → func_name=sum
-        stem = test_file.stem  # removes the last suffix (.ts), keeping test_test_sum.test
-        # stem is e.g. "test_test_sum.test" — remove the .test part too
-        # Actually pathlib.Path.stem only removes the last suffix:
-        # "test_test_sum.test.ts".stem → "test_test_sum.test"
-        # We need the stem without any suffix
+        # Extract func_name from filename:  test_test_sum.test.ts → func_name=sum
         name_no_ext = test_file.name
         # Strip the double extension: .test.ts
         for ext in (".test.ts", ".spec.ts"):
