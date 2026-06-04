@@ -753,7 +753,7 @@ def main() -> None:
     for ex in all_examples:
         by_source[ex.source] = by_source.get(ex.source, 0) + 1
 
-    print("\nDATASET COLLECTION REPORT")
+    print("\nDATASET REPORT")
     print("=========================")
     print(f"total_examples:     {len(all_examples)}")
     print("sources:")
