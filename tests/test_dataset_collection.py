@@ -56,3 +56,35 @@ def test_collect_sprint6_filters_quality():
     assert len(ex.example_id) == 10
     assert ex.metadata["sprint"] == 6
     assert ex.metadata["func_name"] == "foo"
+
+
+def test_collect_sprint13_prompt_format():
+    """Verify prompt/completion format for schema inference examples."""
+    import json
+    from scripts.collect_training_data import TrainingExample, _make_id
+
+    traces = [{"trace_id": "t1", "ui_action": "browse", "endpoint_hint": "/api/articles",
+               "method": "GET", "request_body": None, "response_status": 200,
+               "response_body": {"articles": []}, "auth_present": False, "captured_at": 0.0}]
+    schema = {"endpoint": "/api/articles", "method": "GET",
+              "request_schema": {}, "response_schema": {"type": "object"},
+              "constraints": [], "coverage_score": 1, "is_candidate": True}
+
+    traces_json = json.dumps(traces, indent=2)
+    schema_json = json.dumps(schema, indent=2)
+    prompt = f"Infer an OpenAPI schema from these API traces:\n{traces_json}"
+
+    ex = TrainingExample(
+        example_id=_make_id(prompt, schema_json),
+        source="sprint13_schema",
+        prompt=prompt,
+        completion=schema_json,
+        quality=1.0,
+        metadata={"sprint": 13, "endpoint": "/api/articles", "method": "GET"},
+    )
+    assert ex.source == "sprint13_schema"
+    assert "API traces" in ex.prompt
+    assert "OpenAPI" in ex.prompt
+    assert ex.quality == 1.0
+    assert ex.metadata["sprint"] == 13
+    assert ex.metadata["endpoint"] == "/api/articles"

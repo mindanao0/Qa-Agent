@@ -220,8 +220,72 @@ def collect_sprint6() -> list[TrainingExample]:
 
 
 def collect_sprint13() -> list[TrainingExample]:
-    """Mine src/fuzzer/schema_inferrer.py logs for (traces, schema) pairs."""
-    return []
+    """Re-run SchemaInferrer on habsida backend for (traces, schema) pairs.
+
+    Requires a live browser + Ollama. Falls back gracefully on failure.
+    quality=1.0 if coverage_score >= 1, else 0.7.
+    """
+    try:
+        from playwright.async_api import async_playwright
+        from src.fuzzer.schema_inferrer import SchemaInferrer, TraceRecord
+    except ImportError as exc:
+        print(f"collect_sprint13: import failed — {exc}")
+        return []
+
+    _BACKEND = "https://realworld.habsida.net"
+
+    async def _run() -> list[TrainingExample]:
+        inferrer = SchemaInferrer()
+        examples = []
+
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
+            try:
+                context = await browser.new_context(extra_http_headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                })
+                page = await context.new_page()
+                trace_records: list[TraceRecord] = await inferrer.capture(page, _BACKEND)
+                schemas = await inferrer.infer(trace_records, asyncio.Semaphore(1))
+
+                # Group traces by endpoint for prompt construction
+                traces_by_endpoint: dict[str, list] = {}
+                for tr in trace_records:
+                    ep = tr.endpoint_hint
+                    traces_by_endpoint.setdefault(ep, []).append(tr.model_dump())
+
+                for schema in schemas:
+                    if not getattr(schema, "is_candidate", True):
+                        continue
+                    coverage = getattr(schema, "coverage_score", 1)
+                    quality = 1.0 if coverage >= 1 else 0.7
+                    ep_traces = traces_by_endpoint.get(schema.endpoint, [])[:3]
+                    traces_json = json.dumps(ep_traces, indent=2)
+                    schema_json = schema.model_dump_json(indent=2)
+                    prompt = f"Infer an OpenAPI schema from these API traces:\n{traces_json}"
+                    examples.append(
+                        TrainingExample(
+                            example_id=_make_id(prompt, schema_json),
+                            source="sprint13_schema",
+                            prompt=prompt,
+                            completion=schema_json,
+                            quality=quality,
+                            metadata={
+                                "sprint": 13,
+                                "endpoint": schema.endpoint,
+                                "method": schema.method,
+                            },
+                        )
+                    )
+            finally:
+                await browser.close()
+        return examples
+
+    try:
+        return asyncio.run(_run())
+    except Exception as exc:
+        print(f"collect_sprint13: failed — {exc!r}")
+        return []
 
 
 def collect_sprint14() -> list[TrainingExample]:
