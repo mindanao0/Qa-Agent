@@ -228,6 +228,8 @@ async def evaluate(
         )
 
     n = len(records)
+    if n == 0:
+        raise ValueError(f"val.jsonl is empty or has no valid lines: {val_jsonl}")
     base_pass_rate = base_passed / n
     ft_pass_rate = ft_passed / n
     quality_gain = ft_pass_rate - base_pass_rate
