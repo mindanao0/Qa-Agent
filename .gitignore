@@ -1,0 +1,29 @@
+# Training data (not committed — use data/training/.gitkeep to track the directory)
+data/training/*.jsonl
+data/training/*.json
+!data/training/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+dist/
+build/
+*.egg-info/
+
+# Node
+node_modules/
+
+# Pytest / Hypothesis
+.pytest_cache/
+.hypothesis/
+
+# Logs
+logs/
+
+# Fine-tune artefacts — large files, never commit
+models/finetune_output/checkpoint-*/
+models/finetune_output/emergency/
+models/finetune_output/final/
+models/qwen2.5-coder-finetuned/*.gguf
