@@ -76,7 +76,7 @@ def main() -> int:
     try:
         export()
         return 0
-    except (ImportError, FileNotFoundError, RuntimeError) as exc:
+    except (ImportError, FileNotFoundError, RuntimeError, OSError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
