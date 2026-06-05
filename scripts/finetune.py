@@ -80,6 +80,7 @@ class MemoryGuard:
     def __init__(self, max_growth_mb: float = 5800.0) -> None:
         self.max_growth_mb = max_growth_mb
         self._stop = threading.Event()
+        self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._peak_mb: float | None = None
         self._exceeded = False
@@ -113,24 +114,38 @@ class MemoryGuard:
 
     @property
     def peak_mb(self) -> float | None:
-        return self._peak_mb
+        with self._lock:
+            return self._peak_mb
 
     @property
     def exceeded(self) -> bool:
-        return self._exceeded
+        with self._lock:
+            return self._exceeded
 
     def _poll(self) -> None:
         while not self._stop.is_set():
             if self._monitor is not None:
                 used = self._monitor.used_mb()
                 if used is not None:
-                    self._peak_mb = (
-                        used if self._peak_mb is None else max(self._peak_mb, used)
-                    )
-                    if used > self.max_growth_mb and not self._exceeded:
-                        self._exceeded = True
+                    should_signal = False
+                    with self._lock:
+                        self._peak_mb = (
+                            used if self._peak_mb is None else max(self._peak_mb, used)
+                        )
+                        if used > self.max_growth_mb and not self._exceeded:
+                            self._exceeded = True
+                            should_signal = True
+                    if should_signal:
                         try:
                             os.kill(os.getpid(), signal.SIGINT)
                         except Exception:
                             pass
             self._stop.wait(timeout=0.5)
+        # Final sample after stop
+        if self._monitor is not None:
+            used = self._monitor.used_mb()
+            if used is not None:
+                with self._lock:
+                    self._peak_mb = (
+                        used if self._peak_mb is None else max(self._peak_mb, used)
+                    )
