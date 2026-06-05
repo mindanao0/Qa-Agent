@@ -149,3 +149,33 @@ class MemoryGuard:
                     self._peak_mb = (
                         used if self._peak_mb is None else max(self._peak_mb, used)
                     )
+
+
+# ---------------------------------------------------------------------------
+# Dataset helpers
+# ---------------------------------------------------------------------------
+
+
+def load_jsonl(path: Path) -> list[dict[str, Any]]:
+    """Load a JSONL file and return all non-blank records."""
+    if not path.exists():
+        raise FileNotFoundError(f"Dataset not found: {path}")
+    records: list[dict[str, Any]] = []
+    with path.open(encoding="utf-8") as fh:
+        for lineno, line in enumerate(fh, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                print(f"[warn] JSONL parse error at line {lineno}: {exc}", file=sys.stderr)
+    return records
+
+
+def to_chatml(record: dict[str, Any]) -> list[dict[str, str]]:
+    """Convert a {prompt, completion} record to a 2-message ChatML list."""
+    return [
+        {"role": "user",      "content": record["prompt"]},
+        {"role": "assistant", "content": record["completion"]},
+    ]
