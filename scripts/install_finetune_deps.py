@@ -9,6 +9,7 @@ On Windows, if bitsandbytes fails use:
 """
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 
@@ -32,8 +33,9 @@ def install() -> bool:
     """Install all deps. Return True on success."""
     for dep in DEPS:
         print(f"Installing: {dep}")
+        # Use 'uv pip install' — uv venvs don't ship pip by default.
         result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", dep],
+            ["uv", "pip", "install", dep],
             check=False,
         )
         if result.returncode != 0:
@@ -43,13 +45,17 @@ def install() -> bool:
 
 
 def verify() -> bool:
-    """Verify all packages importable. Return True if all OK."""
+    """Verify all packages are findable. Return True if all OK.
+
+    Uses importlib.util.find_spec (no-import check) because torch/unsloth/triton
+    can segfault or raise at import time on Windows before a GPU context is active.
+    """
     ok = True
     for pkg in _VERIFY_IMPORTS:
-        try:
-            __import__(pkg)
+        spec = importlib.util.find_spec(pkg)
+        if spec is not None:
             print(f"OK:      {pkg}")
-        except ImportError:
+        else:
             print(f"MISSING: {pkg}")
             ok = False
     return ok
