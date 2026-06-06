@@ -40,10 +40,10 @@ class FinetuneConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     model_name: str = "unsloth/Qwen2.5-Coder-7B-Instruct-bnb-4bit"
-    max_seq_length: int = 1024
+    max_seq_length: int = 512   # OOM fallback: 1024→512 for 6GB WDDM Windows
     load_in_4bit: bool = True
-    lora_r: int = 8
-    lora_alpha: int = 16
+    lora_r: int = 4             # OOM fallback: 8→4 for 6GB WDDM Windows
+    lora_alpha: int = 8         # keep ratio lora_alpha = 2×lora_r
     lora_dropout: float = 0.0
     target_modules: list[str] = [
         "q_proj", "k_proj", "v_proj", "o_proj",
@@ -226,6 +226,10 @@ def train(config: FinetuneConfig) -> dict[str, Any]:
         max_seq_length=config.max_seq_length,
         dtype=None,
         load_in_4bit=config.load_in_4bit,
+        # Force all layers onto GPU 0 — avoids WDDM's conservative device_map="auto"
+        # which incorrectly assigns layers to CPU on Windows when display overhead
+        # makes usable VRAM appear smaller than it actually is.
+        device_map={"": 0},
     )
     model = FastLanguageModel.get_peft_model(
         model,
@@ -308,23 +312,27 @@ def train(config: FinetuneConfig) -> dict[str, Any]:
     )
 
     oom_errors = 0
-    vram_peak_mb: float | None = None
-
-    with MemoryGuard(max_growth_mb=5800.0) as guard:
-        try:
-            if resume:
-                stats = trainer.train(resume_from_checkpoint=resume)
-            else:
-                stats = trainer.train()
-        except KeyboardInterrupt:
-            oom_errors = 1
-            emergency_dir = output_dir / "emergency"
-            emergency_dir.mkdir(parents=True, exist_ok=True)
-            model.save_pretrained(str(emergency_dir))
-            tokenizer.save_pretrained(str(emergency_dir))
-            print(f"Emergency checkpoint saved: {emergency_dir}", file=sys.stderr)
-            raise
-        vram_peak_mb = guard.peak_mb
+    # MemoryGuard uses os.kill(SIGINT) which on Windows terminates the process
+    # before Python can catch it (exit code 2). Use VRAMMonitor directly for
+    # peak tracking only; rely on PyTorch's CUDA OOM for the hard stop.
+    _vram_mon = MemoryGuard(max_growth_mb=99999.0)  # threshold=noop; track only
+    _vram_mon.start()
+    try:
+        if resume:
+            stats = trainer.train(resume_from_checkpoint=resume)
+        else:
+            stats = trainer.train()
+    except KeyboardInterrupt:
+        oom_errors = 1
+        emergency_dir = output_dir / "emergency"
+        emergency_dir.mkdir(parents=True, exist_ok=True)
+        model.save_pretrained(str(emergency_dir))
+        tokenizer.save_pretrained(str(emergency_dir))
+        print(f"Emergency checkpoint saved: {emergency_dir}", file=sys.stderr)
+        raise
+    finally:
+        _vram_mon.stop()
+    vram_peak_mb = _vram_mon.peak_mb
 
     # -- Save final model --
     final_dir = output_dir / "final"
