@@ -59,13 +59,16 @@ class UniversalQAAgent:
                 await page.goto(self._url, wait_until="domcontentloaded", timeout=30_000)
                 await self._auth.setup(page)
 
-                # Phase 2: Discover
-                logger.info("Phase 2: site discovery")
-                sfg_store = await self._discovery.discover(page, self._url)
+                # Phase 2: Discover — ใช้ page.url หลัง auth (อาจ redirect เช่น /inventory.html)
+                discover_url = page.url if page.url != self._url else self._url
+                logger.info(f"Phase 2: site discovery from {discover_url}")
+                sfg_store = await self._discovery.discover(page, discover_url)
 
-                # Phase 3: Plan
+                # Phase 3: Plan — ใช้ discover_url เป็น base สำหรับ query nodes
                 logger.info("Phase 3: generating test cases")
-                test_cases = await self._planner.plan(sfg_store, self._url)
+                from urllib.parse import urlparse
+                base_url = f"{urlparse(discover_url).scheme}://{urlparse(discover_url).netloc}"
+                test_cases = await self._planner.plan(sfg_store, base_url)
                 logger.info(f"  {len(test_cases)} test cases generated")
 
                 # Phase 4: Execute + Report
