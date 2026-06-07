@@ -62,14 +62,16 @@ class UniversalTestPlanner:
 
         for node in form_nodes[:10]:  # cap at 10 to avoid LLM overload
             prompt = (
-                f"You are a QA engineer. Given this web page, write 2-3 test cases "
-                f"(at least 1 happy-path + 1 negative) as JSON.\n\n"
+                f"คุณเป็น QA Engineer กรุณาเขียน test case 2-3 ข้อ (อย่างน้อย 1 happy-path และ 1 negative) "
+                f"สำหรับหน้าเว็บนี้ในรูปแบบ JSON **ตอบเป็นภาษาไทยทั้งหมด**\n\n"
                 f"URL: {node.url}\n"
-                f"Title: {node.page_title}\n"
-                f"Page content summary:\n{node.pam_content[:800]}\n\n"
-                f"Return JSON with field 'test_cases': list of objects each having "
-                f"title, priority (high/medium/low), preconditions (list), "
-                f"steps (list of strings, min 1), expected_outcome."
+                f"ชื่อหน้า: {node.page_title}\n"
+                f"สรุปเนื้อหาหน้า:\n{node.pam_content[:800]}\n\n"
+                f"ส่งกลับ JSON ที่มี field 'test_cases': รายการ object ที่มี "
+                f"title (ชื่อ test case ภาษาไทย), priority (high/medium/low), "
+                f"preconditions (รายการเงื่อนไขก่อนทดสอบ ภาษาไทย), "
+                f"steps (รายการขั้นตอนการทดสอบ ภาษาไทย อย่างน้อย 1 ขั้นตอน), "
+                f"expected_outcome (ผลลัพธ์ที่คาดหวัง ภาษาไทย)"
             )
             try:
                 response: _FuncResponse = await self._client.create_structured(
@@ -88,11 +90,11 @@ class UniversalTestPlanner:
             except (StructuredGenerationError, Exception) as exc:
                 logger.warning(f"UniversalTestPlanner: LLM failed for {node.url}: {exc!r}")
                 results.append(TestCase(
-                    title=f"Verify {node.page_title} loads",
+                    title=f"ตรวจสอบว่าหน้า {node.page_title} โหลดได้",
                     type="functional",
                     priority="medium",
-                    steps=[f"Navigate to {node.url}", "Verify page title is present"],
-                    expected_outcome="Page loads without error",
+                    steps=[f"เปิดหน้า {node.url}", "ตรวจสอบว่าชื่อหน้าแสดงขึ้นมา"],
+                    expected_outcome="หน้าเว็บโหลดสำเร็จโดยไม่มี error",
                     source_url=node.url,
                 ))
         return results
@@ -102,17 +104,17 @@ class UniversalTestPlanner:
     ) -> list[TestCase]:
         return [
             TestCase(
-                title=f"Accessibility: {node.page_title}",
+                title=f"ตรวจสอบ Accessibility: {node.page_title}",
                 type="accessibility",
                 priority="medium",
-                preconditions=[f"user is on {node.url}"],
+                preconditions=[f"อยู่ที่หน้า {node.url}"],
                 steps=[
-                    f"Navigate to {node.url}",
-                    "Check all interactive elements have accessible names",
-                    "Check all images have alt text",
-                    "Check no decorative roles on interactive elements",
+                    f"เปิดหน้า {node.url}",
+                    "ตรวจสอบว่า element ที่โต้ตอบได้ทุกตัวมี accessible name",
+                    "ตรวจสอบว่ารูปภาพทุกรูปมี alt text",
+                    "ตรวจสอบว่าไม่มี decorative role บน element ที่โต้ตอบได้",
                 ],
-                expected_outcome="No WCAG violations found",
+                expected_outcome="ไม่พบการละเมิดกฎ WCAG",
                 source_url=node.url,
             )
             for node in nodes
@@ -126,31 +128,31 @@ class UniversalTestPlanner:
             if "form" not in node.coverage_tags:
                 continue
             results.append(TestCase(
-                title=f"XSS injection: {node.page_title}",
+                title=f"ทดสอบ XSS injection: {node.page_title}",
                 type="security",
                 priority="high",
-                preconditions=[f"user is on {node.url}"],
+                preconditions=[f"อยู่ที่หน้า {node.url}"],
                 steps=[
-                    f"Navigate to {node.url}",
-                    f"Fill all text inputs with XSS payload: {_XSS_PAYLOAD}",
-                    "Submit the form",
-                    "Verify payload is not executed",
+                    f"เปิดหน้า {node.url}",
+                    f"กรอก XSS payload ลงทุกช่องรับข้อมูล: {_XSS_PAYLOAD}",
+                    "กด submit form",
+                    "ตรวจสอบว่า payload ไม่ถูก execute",
                 ],
-                expected_outcome="Page does not execute the script payload",
+                expected_outcome="หน้าเว็บไม่ execute script payload",
                 source_url=node.url,
             ))
             results.append(TestCase(
-                title=f"SQL injection: {node.page_title}",
+                title=f"ทดสอบ SQL injection: {node.page_title}",
                 type="security",
                 priority="high",
-                preconditions=[f"user is on {node.url}"],
+                preconditions=[f"อยู่ที่หน้า {node.url}"],
                 steps=[
-                    f"Navigate to {node.url}",
-                    f"Fill all text inputs with SQLi payload: {_SQLI_PAYLOAD}",
-                    "Submit the form",
-                    "Verify no SQL error is exposed",
+                    f"เปิดหน้า {node.url}",
+                    f"กรอก SQLi payload ลงทุกช่องรับข้อมูล: {_SQLI_PAYLOAD}",
+                    "กด submit form",
+                    "ตรวจสอบว่าไม่มี SQL error โชว์",
                 ],
-                expected_outcome="Page does not expose SQL errors or unintended data",
+                expected_outcome="หน้าเว็บไม่เปิดเผย SQL error หรือข้อมูลที่ไม่ตั้งใจ",
                 source_url=node.url,
             ))
         return results

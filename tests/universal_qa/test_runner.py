@@ -14,12 +14,12 @@ def _make_tc(type_: str, url: str = "https://x.com") -> TestCase:
 
 def test_map_exception_timeout():
     msg = _map_exception(TimeoutError("locator not found"))
-    assert "not found within" in msg
+    assert "ไม่พบ element" in msg
 
 
 def test_map_exception_assertion():
     msg = _map_exception(AssertionError("expected True"))
-    assert "Expected outcome not met" in msg
+    assert "ผลลัพธ์ไม่ตรงตามที่คาดหวัง" in msg
 
 
 def test_map_exception_generic():

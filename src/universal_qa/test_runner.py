@@ -24,9 +24,9 @@ _SQLI_PAYLOAD = "' OR '1'='1"
 def _map_exception(exc: Exception) -> str:
     msg = str(exc)
     if isinstance(exc, TimeoutError) or "timeout" in msg.lower():
-        return f"Element not found within 30s — {msg[:120]}"
+        return f"ไม่พบ element ภายใน 30 วินาที — {msg[:120]}"
     if isinstance(exc, AssertionError):
-        return f"Expected outcome not met — {msg[:120]}"
+        return f"ผลลัพธ์ไม่ตรงตามที่คาดหวัง — {msg[:120]}"
     return msg[:200]
 
 
@@ -90,7 +90,7 @@ class UniversalTestRunner:
             StepTrace(
                 step=step,
                 status="passed" if hyp_result.passed else "failed",
-                detail=f"executed {hyp_result.steps_executed} step(s)",
+                detail=f"ดำเนินการ {hyp_result.steps_executed} ขั้นตอน",
                 error=hyp_result.failure_reason if not hyp_result.passed else None,
             )
             for step in tc.steps
@@ -111,8 +111,8 @@ class UniversalTestRunner:
 
         try:
             await page.goto(tc.source_url, wait_until="domcontentloaded", timeout=30_000)
-            traces.append(StepTrace(step=f"Navigate to {tc.source_url}",
-                                    status="passed", detail="page loaded"))
+            traces.append(StepTrace(step=f"เปิดหน้า {tc.source_url}",
+                                    status="passed", detail="โหลดหน้าสำเร็จ"))
         except Exception as exc:
             return TestResult(
                 test_case=tc, passed=False,
@@ -133,21 +133,21 @@ class UniversalTestRunner:
 
         passed = not aria_findings and missing_alt == 0
         detail = (
-            f"ARIA: {aria_findings if aria_findings else ['ok']}; "
-            f"missing alt: {missing_alt}"
+            f"ARIA: {aria_findings if aria_findings else ['ผ่าน']}; "
+            f"รูปขาด alt: {missing_alt}"
         )
         traces.append(StepTrace(
-            step="Check accessibility rules",
+            step="ตรวจสอบกฎ Accessibility",
             status="passed" if passed else "failed",
             detail=detail,
             error="; ".join(aria_findings) if aria_findings else None,
         ))
         if missing_alt:
             traces.append(StepTrace(
-                step="Check image alt text",
+                step="ตรวจสอบ alt text ของรูปภาพ",
                 status="failed",
-                detail=f"{missing_alt} image(s) missing alt attribute",
-                error=f"{missing_alt} images missing alt",
+                detail=f"รูปภาพ {missing_alt} รูปขาด alt attribute",
+                error=f"รูปภาพ {missing_alt} รูปไม่มี alt text",
             ))
 
         failure_reason = None
@@ -174,8 +174,8 @@ class UniversalTestRunner:
 
         try:
             await page.goto(tc.source_url, wait_until="domcontentloaded", timeout=30_000)
-            traces.append(StepTrace(step=f"Navigate to {tc.source_url}",
-                                    status="passed", detail="page loaded"))
+            traces.append(StepTrace(step=f"เปิดหน้า {tc.source_url}",
+                                    status="passed", detail="โหลดหน้าสำเร็จ"))
         except Exception as exc:
             return TestResult(
                 test_case=tc, passed=False, steps_trace=traces,
@@ -191,7 +191,7 @@ class UniversalTestRunner:
             except Exception:
                 pass
         traces.append(StepTrace(
-            step=f"Fill {count} input(s) with payload",
+            step=f"กรอก payload ลงใน {count} ช่องรับข้อมูล",
             status="passed", detail=f"payload: {payload[:60]}",
         ))
 
@@ -207,28 +207,28 @@ class UniversalTestRunner:
             xss_fired: bool = await page.evaluate("() => !!window.__xss_fired")
             if xss_fired:
                 passed = False
-                failure_reason = "XSS payload was executed (window.__xss_fired=true)"
+                failure_reason = "XSS payload ถูก execute (window.__xss_fired=true)"
         else:
             content = (await page.content()).lower()
             sql_keywords = ["sql syntax", "mysql_fetch", "ora-0", "sqlite", "syntax error near"]
             hit = next((kw for kw in sql_keywords if kw in content), None)
             if hit:
                 passed = False
-                failure_reason = f"SQL error keyword '{hit}' found in page response"
+                failure_reason = f"พบ SQL error keyword '{hit}' ในหน้าที่ตอบกลับ"
 
         missing_headers = await SecurityObserver._missing_headers(page, tc.source_url)
         if missing_headers:
             traces.append(StepTrace(
-                step="Check security headers",
+                step="ตรวจสอบ Security Headers",
                 status="failed",
-                detail=f"missing: {missing_headers}",
-                error=f"Missing headers: {', '.join(missing_headers)}",
+                detail=f"ขาด: {missing_headers}",
+                error=f"ขาด Headers: {', '.join(missing_headers)}",
             ))
 
         traces.append(StepTrace(
-            step="Verify payload not executed",
+            step="ตรวจสอบว่า payload ไม่ถูก execute",
             status="passed" if passed else "failed",
-            detail="checked page response",
+            detail="ตรวจสอบ response ของหน้าแล้ว",
             error=failure_reason,
         ))
 
