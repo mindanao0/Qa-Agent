@@ -51,23 +51,23 @@ class HTMLReporter:
 
         cards = "\n".join(self._render_card(r) for r in results)
         html = f"""<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><title>QA Report {ts}</title>
+<html lang="th">
+<head><meta charset="UTF-8"><title>รายงาน QA — {ts}</title>
 <style>{_CSS}</style></head>
 <body>
-<h1>QA Report — {ts}</h1>
+<h1>รายงานผลทดสอบ — {ts}</h1>
 <div class="summary">
-  <span class="badge info">Total: {len(results)}</span>
-  <span class="badge pass">Passed: {passed}</span>
-  <span class="badge fail">Failed: {failed}</span>
+  <span class="badge info">ทั้งหมด: {len(results)}</span>
+  <span class="badge pass">ผ่าน: {passed}</span>
+  <span class="badge fail">ไม่ผ่าน: {failed}</span>
 </div>
 <div class="filters">
-  <button onclick="filter('all')">All</button>
+  <button onclick="filter('all')">ทั้งหมด</button>
   <button onclick="filter('functional')">Functional</button>
   <button onclick="filter('accessibility')">Accessibility</button>
   <button onclick="filter('security')">Security</button>
-  <button onclick="filter('passed')">Passed</button>
-  <button onclick="filter('failed')">Failed</button>
+  <button onclick="filter('passed')">ผ่าน</button>
+  <button onclick="filter('failed')">ไม่ผ่าน</button>
 </div>
 {cards}
 <script>{_JS}</script>
@@ -85,7 +85,7 @@ class HTMLReporter:
             for t in result.steps_trace
         )
         failure_html = (
-            f'<div class="failure-reason">&#9888; {result.failure_reason}</div>'
+            f'<div class="failure-reason">&#9888; สาเหตุที่ไม่ผ่าน: {result.failure_reason}</div>'
             if result.failure_reason else ""
         )
         screenshot_html = ""
@@ -95,19 +95,25 @@ class HTMLReporter:
                 b64 = base64.b64encode(img_bytes).decode()
                 screenshot_html = (
                     f'<div class="screenshot">'
-                    f'<img src="data:image/png;base64,{b64}" alt="screenshot"/>'
+                    f'<p style="font-size:12px;color:#888;margin-bottom:4px">ภาพหน้าจอ ณ เวลาที่ทดสอบไม่ผ่าน</p>'
+                    f'<img src="data:image/png;base64,{b64}" alt="ภาพหน้าจอ"/>'
                     f'</div>'
                 )
             except Exception:
                 pass
         precond_html = (
-            "<ul>" + "".join(f"<li>{p}</li>" for p in tc.preconditions) + "</ul>"
+            '<p style="font-size:12px;font-weight:600;margin:6px 0 2px">เงื่อนไขเริ่มต้น:</p>'
+            "<ul style='margin:0 0 6px;padding-left:18px;font-size:13px'>"
+            + "".join(f"<li>{p}</li>" for p in tc.preconditions)
+            + "</ul>"
             if tc.preconditions else ""
         )
+        steps_label = '<p style="font-size:12px;font-weight:600;margin:6px 0 2px">ขั้นตอน:</p>' if result.steps_trace else ""
         return f"""<div class="test-card {status}" data-type="{tc.type}" data-status="{status}">
   <div class="test-title">{tc.title}</div>
-  <div class="test-meta">{tc.type.upper()} | priority: {tc.priority} | {result.duration_ms}ms | {tc.source_url}</div>
+  <div class="test-meta">{tc.type.upper()} | ความสำคัญ: {tc.priority} | {result.duration_ms}ms | {tc.source_url}</div>
   {precond_html}
+  {steps_label}
   {steps_html}
   {failure_html}
   {screenshot_html}
