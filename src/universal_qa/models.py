@@ -14,7 +14,7 @@ class TestCase(BaseModel):
     type: Literal["functional", "accessibility", "security"]
     priority: Literal["high", "medium", "low"]
     preconditions: list[str] = Field(default_factory=list)
-    steps: list[str]
+    steps: list[str] = Field(..., min_length=1)
     expected_outcome: str
     source_url: str
 
@@ -36,7 +36,7 @@ class TestResult(BaseModel):
     steps_trace: list[StepTrace] = Field(default_factory=list)
     failure_reason: str | None = None
     screenshot_path: str | None = None
-    duration_ms: int = 0
+    duration_ms: int = Field(default=0, ge=0)
 
 
 __all__ = ["TestCase", "StepTrace", "TestResult"]

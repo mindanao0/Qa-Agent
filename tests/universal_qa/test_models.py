@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 from src.universal_qa.models import TestCase, StepTrace, TestResult
 
 
@@ -16,7 +17,7 @@ def test_test_case_auto_id():
 
 
 def test_test_case_rejects_extra_field():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         TestCase(
             title="T", type="functional", priority="high",
             steps=["s"], expected_outcome="e",
@@ -41,6 +42,7 @@ def test_test_result_failed_with_reason():
     )
     assert not result.passed
     assert result.screenshot_path is None
+    assert result.failure_reason == "XSS payload executed"
 
 
 def test_test_result_passed_no_failure_reason():
@@ -52,3 +54,19 @@ def test_test_result_passed_no_failure_reason():
     result = TestResult(test_case=tc, passed=True, duration_ms=200)
     assert result.failure_reason is None
     assert result.steps_trace == []
+
+
+def test_test_case_rejects_invalid_type():
+    with pytest.raises(ValidationError):
+        TestCase(
+            title="T", type="performance", priority="high",
+            steps=["s"], expected_outcome="e", source_url="https://x.com",
+        )
+
+
+def test_test_case_ids_are_unique():
+    tc1 = TestCase(title="A", type="functional", priority="low",
+                   steps=["s"], expected_outcome="e", source_url="https://x.com")
+    tc2 = TestCase(title="B", type="functional", priority="low",
+                   steps=["s"], expected_outcome="e", source_url="https://x.com")
+    assert tc1.id != tc2.id
