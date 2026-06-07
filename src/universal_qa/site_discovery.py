@@ -68,6 +68,7 @@ class SiteDiscovery:
                 )
 
                 if depth < self.max_depth:
+                    # 1. ดึง <a href> links ปกติ
                     links: list[str] = await page.evaluate("""
                         () => {
                             const hrefs = new Set();
@@ -80,8 +81,15 @@ class SiteDiscovery:
                             return Array.from(hrefs);
                         }
                     """)
-                    logger.debug(f"SiteDiscovery: found {len(links)} valid links on {url}: {links[:5]}")
-                    for link in links:
+                    # 2. Interaction-based discovery สำหรับ SPA (href="#" หรือไม่มี href)
+                    interaction_links = await self._discover_by_interaction(
+                        page, url, base_domain
+                    )
+                    all_links = links + interaction_links
+                    logger.debug(
+                        f"SiteDiscovery: {len(links)} href + {len(interaction_links)} interaction links on {url}"
+                    )
+                    for link in all_links:
                         clean = link.split("?")[0].split("#")[0]
                         if urlparse(clean).netloc == base_domain and clean not in visited:
                             queue.append((clean, depth + 1))
@@ -92,6 +100,72 @@ class SiteDiscovery:
             f"SiteDiscovery: done — {pages_visited} pages, {store.node_count()} nodes"
         )
         return store
+
+    async def _discover_by_interaction(
+        self, page: Page, original_url: str, base_domain: str, max_clicks: int = 15
+    ) -> list[str]:
+        """คลิก SPA navigation elements แล้วจับ URL ที่เปลี่ยน.
+
+        ใช้สำหรับ SPA ที่ใช้ href='#' หรือ JavaScript navigation แทน <a href>.
+        """
+        _BLOCKED_TEXT = frozenset({
+            "add to cart", "remove", "delete", "checkout", "login", "logout",
+            "register", "submit", "send", "buy", "purchase", "sign up", "sign in",
+            "เพิ่มลงตะกร้า", "ลบ", "ชำระเงิน", "เข้าสู่ระบบ", "ออกจากระบบ",
+        })
+
+        candidates: list[dict] = await page.evaluate("""() => {
+            const BLOCKED = ['add to cart','remove','delete','checkout','login',
+                             'logout','register','submit','send','buy','purchase'];
+            const seen = new Set();
+            const results = [];
+            document.querySelectorAll('a, [role="link"], [role="button"]').forEach(el => {
+                const href = el.getAttribute('href');
+                // ข้ามถ้า href เป็น URL จริงหรือ path จริง (จัดการโดย href extraction แล้ว)
+                if (href && href.startsWith('http')) return;
+                if (href && href.startsWith('/') && href.length > 1 && !href.startsWith('/#')) return;
+                const text = (el.textContent || '').trim().toLowerCase();
+                if (!text || seen.has(text)) return;
+                if (BLOCKED.some(b => text.includes(b))) return;
+                seen.add(text);
+                // หา selector ที่ stable
+                const sel = el.id ? '#' + el.id
+                    : (el.className && typeof el.className === 'string' && el.className.trim()
+                        ? el.tagName.toLowerCase() + '.' + el.className.trim().split(/\s+/)[0]
+                        : el.tagName.toLowerCase() + ':nth-of-type(' + (Array.from(el.parentNode?.children || []).indexOf(el) + 1) + ')');
+                results.push({selector: sel, text: el.textContent.trim().slice(0, 40)});
+            });
+            return results.slice(0, 15);
+        }""")
+
+        discovered: list[str] = []
+        for c in candidates[:max_clicks]:
+            try:
+                pre_url = page.url.split("?")[0].split("#")[0]
+                el = await page.query_selector(c["selector"])
+                if not el:
+                    continue
+                await el.click(timeout=3_000)
+                await page.wait_for_timeout(400)
+                post_base = page.url.split("?")[0].split("#")[0]
+                if (post_base != pre_url
+                        and urlparse(post_base).netloc == base_domain
+                        and page.url not in discovered):
+                    discovered.append(page.url)
+                    logger.info(
+                        f"SiteDiscovery: interaction found {page.url!r} via '{c['text']}'"
+                    )
+                # navigate กลับหน้าเดิมถ้า URL เปลี่ยน
+                if page.url.split("?")[0].split("#")[0] != original_url.split("?")[0].split("#")[0]:
+                    await page.goto(original_url, wait_until="networkidle", timeout=15_000)
+            except Exception as exc:
+                logger.debug(f"SiteDiscovery: interaction click skipped ({c.get('text','?')!r}): {exc!r}")
+                try:
+                    if page.url.split("?")[0].split("#")[0] != original_url.split("?")[0].split("#")[0]:
+                        await page.goto(original_url, wait_until="networkidle", timeout=15_000)
+                except Exception:
+                    pass
+        return discovered
 
     @staticmethod
     async def _visit_and_record(crawler: SFGCrawler, page: Page):
