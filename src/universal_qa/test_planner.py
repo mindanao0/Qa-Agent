@@ -64,13 +64,18 @@ class UniversalTestPlanner:
             prompt = (
                 f"คุณเป็น QA Engineer กรุณาเขียน test case 2-3 ข้อ (อย่างน้อย 1 happy-path และ 1 negative) "
                 f"สำหรับหน้าเว็บนี้ในรูปแบบ JSON **ตอบเป็นภาษาไทยทั้งหมด**\n\n"
-                f"URL: {node.url}\n"
+                f"URL ของหน้านี้: {node.url}\n"
                 f"ชื่อหน้า: {node.page_title}\n"
                 f"สรุปเนื้อหาหน้า:\n{node.pam_content[:800]}\n\n"
+                f"กฎการเขียน steps (สำคัญมาก):\n"
+                f"- ขั้นตอน navigate ต้องใช้ URL เต็มเสมอ เช่น: navigate to {node.url}\n"
+                f"- ขั้นตอน click ต้องใส่ข้อความบนปุ่ม/ลิงก์ใน double quotes เช่น: click button \"Login\"\n"
+                f"- ขั้นตอน fill ต้องระบุชื่อ field ใน double quotes เช่น: fill \"Email Address\" with test@test.com\n"
+                f"- ห้ามใช้ path เช่น /login หรือ /products ในขั้นตอน ให้ใช้ URL เต็มหรือชื่อปุ่มแทน\n\n"
                 f"ส่งกลับ JSON ที่มี field 'test_cases': รายการ object ที่มี "
                 f"title (ชื่อ test case ภาษาไทย), priority (high/medium/low), "
                 f"preconditions (รายการเงื่อนไขก่อนทดสอบ ภาษาไทย), "
-                f"steps (รายการขั้นตอนการทดสอบ ภาษาไทย อย่างน้อย 1 ขั้นตอน), "
+                f"steps (รายการขั้นตอนตามกฎด้านบน อย่างน้อย 1 ขั้นตอน), "
                 f"expected_outcome (ผลลัพธ์ที่คาดหวัง ภาษาไทย)"
             )
             try:

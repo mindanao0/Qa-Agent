@@ -20,6 +20,34 @@ from src.universal_qa.reporters.terminal import TerminalReporter
 _XSS_PAYLOAD = "<script>window.__xss_fired=true;</script>"
 _SQLI_PAYLOAD = "' OR '1'='1"
 
+_NAV_KEYWORDS = ("navigate", "goto", "go to", "open", "visit", "เปิดหน้า", "ไปที่", "เปิด")
+
+
+def _normalize_steps(steps: list[str], source_url: str) -> list[str]:
+    """แก้ step ที่ navigate ด้วย relative path ให้เป็น full URL.
+
+    ตัวอย่าง:
+      "navigate to /products" + source_url="https://x.com/login"
+      → "navigate to https://x.com/products"
+    """
+    from urllib.parse import urlparse, urljoin
+    base = "{u.scheme}://{u.netloc}".format(u=urlparse(source_url))
+    fixed = []
+    for step in steps:
+        lower = step.lower()
+        is_nav = any(kw in lower for kw in _NAV_KEYWORDS)
+        has_http = "http://" in step or "https://" in step
+        if is_nav and not has_http:
+            # หา path ที่ขึ้นต้นด้วย / หรือข้อความ quoted
+            import re
+            path_match = re.search(r'["\']?(/[\w/\-]*)["\']?', step)
+            if path_match:
+                path = path_match.group(1)
+                full_url = urljoin(base + "/", path.lstrip("/"))
+                step = re.sub(re.escape(path_match.group(0)), f" {full_url}", step, count=1).strip()
+        fixed.append(step)
+    return fixed
+
 
 def _map_exception(exc: Exception) -> str:
     msg = str(exc)
@@ -81,7 +109,7 @@ class UniversalTestRunner:
             goal=tc.title,
             start_url=tc.source_url,
             preconditions=tc.preconditions,
-            steps=tc.steps,
+            steps=_normalize_steps(tc.steps, tc.source_url),
             expected_outcome=tc.expected_outcome,
             confidence=0.7,
         )
