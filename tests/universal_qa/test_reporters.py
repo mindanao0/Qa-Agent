@@ -51,3 +51,39 @@ def test_terminal_reporter_summary(capsys):
     captured = capsys.readouterr()
     assert "2" in captured.out   # passed count
     assert "1" in captured.out   # failed count
+
+
+from src.universal_qa.reporters.html import HTMLReporter
+import pathlib
+
+
+def test_html_reporter_creates_file(tmp_path):
+    reporter = HTMLReporter(output_dir=tmp_path)
+    results = [
+        _make_result("Login test", passed=True),
+        _make_result("XSS test", passed=False, type_="security",
+                     failure_reason="XSS payload executed"),
+    ]
+    path = reporter.generate(results)
+    assert path.exists()
+    content = path.read_text(encoding="utf-8")
+    assert "Login test" in content
+    assert "XSS test" in content
+    assert "XSS payload executed" in content
+
+
+def test_html_reporter_is_self_contained(tmp_path):
+    reporter = HTMLReporter(output_dir=tmp_path)
+    path = reporter.generate([_make_result("T", passed=True)])
+    content = path.read_text(encoding="utf-8")
+    assert "<style>" in content
+    assert "src=" not in content  # no external stylesheet/script src
+
+
+def test_html_reporter_has_filter_controls(tmp_path):
+    reporter = HTMLReporter(output_dir=tmp_path)
+    path = reporter.generate([_make_result("T", passed=True)])
+    content = path.read_text(encoding="utf-8")
+    assert "functional" in content
+    assert "accessibility" in content
+    assert "security" in content
