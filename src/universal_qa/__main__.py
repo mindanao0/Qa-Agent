@@ -13,6 +13,12 @@ def main() -> None:
     parser.add_argument("--password", default=None, help="Login password (optional)")
     parser.add_argument("--max-pages", type=int, default=50,
                         help="Max pages to crawl (default 50)")
+    parser.add_argument("--explore-timeout", type=int, default=5,
+                        help="Exploration timeout in minutes (default 5)")
+    parser.add_argument("--max-depth", type=int, default=4,
+                        help="Max navigation depth (default 4)")
+    parser.add_argument("--allow-destructive", action="store_true", default=False,
+                        help="Allow clicking delete/remove/payment actions")
     parser.add_argument("--headless", action="store_true", default=True,
                         help="Run browser in headless mode (default)")
     parser.add_argument("--no-headless", dest="headless", action="store_false",
@@ -24,6 +30,9 @@ def main() -> None:
         username=args.username,
         password=args.password,
         max_pages=args.max_pages,
+        explore_timeout=args.explore_timeout,
+        max_depth=args.max_depth,
+        allow_destructive=args.allow_destructive,
         headless=args.headless,
     )
 

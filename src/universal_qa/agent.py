@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pathlib
+from urllib.parse import urlparse
 
 from loguru import logger
 from playwright.async_api import async_playwright
@@ -27,6 +28,9 @@ class UniversalQAAgent:
         username: str | None = None,
         password: str | None = None,
         max_pages: int = 50,
+        explore_timeout: int = 5,
+        max_depth: int = 4,
+        allow_destructive: bool = False,
         headless: bool = True,
         output_dir: pathlib.Path | None = None,
     ) -> None:
@@ -38,6 +42,13 @@ class UniversalQAAgent:
         self._discovery = SiteDiscovery(max_pages=max_pages)
         self._planner = UniversalTestPlanner()
         self._terminal = TerminalReporter()
+        from src.universal_qa.explorer.nav_map import ExplorerConfig
+        self._explorer_cfg = ExplorerConfig(
+            max_pages=max_pages,
+            explore_timeout_min=explore_timeout,
+            max_depth=max_depth,
+            allow_destructive=allow_destructive,
+        )
 
     async def run(self) -> list[TestResult]:
         async with async_playwright() as pw:
@@ -59,16 +70,33 @@ class UniversalQAAgent:
                 await page.goto(self._url, wait_until="domcontentloaded", timeout=30_000)
                 await self._auth.setup(page)
 
-                # Phase 2: Discover — ใช้ page.url หลัง auth (อาจ redirect เช่น /inventory.html)
+                # Phase 2: Discover URLs (fast)
                 discover_url = page.url if page.url != self._url else self._url
                 logger.info(f"Phase 2: site discovery from {discover_url}")
                 sfg_store = await self._discovery.discover(page, discover_url)
+                discovered_urls = [
+                    n.url for n in sfg_store.get_nodes_by_url_prefix(
+                        f"{urlparse(discover_url).scheme}://{urlparse(discover_url).netloc}"
+                    )
+                ]
+                if discover_url not in discovered_urls:
+                    discovered_urls.insert(0, discover_url)
 
-                # Phase 3: Plan — ใช้ discover_url เป็น base สำหรับ query nodes
-                logger.info("Phase 3: generating test cases")
-                from urllib.parse import urlparse
-                base_url = f"{urlparse(discover_url).scheme}://{urlparse(discover_url).netloc}"
-                test_cases = await self._planner.plan(sfg_store, base_url)
+                # Phase 3: Explore (thorough) → NavigationMap
+                logger.info("Phase 3: interaction-based exploration")
+                from src.universal_qa.explorer.site_explorer import SiteExplorer
+                explorer = SiteExplorer(
+                    auth=self._auth, config=self._explorer_cfg,
+                    client=self._planner._client,
+                )
+                nav_map = await explorer.explore(page, discovered_urls)
+                logger.info(
+                    f"  Explored {len(nav_map.pages)} pages, {len(nav_map.flows)} flows"
+                )
+
+                # Phase 4: Plan from NavigationMap
+                logger.info("Phase 4: generating test cases")
+                test_cases = await self._planner.plan_from_map(nav_map)
                 logger.info(f"  {len(test_cases)} test cases generated")
 
                 # Phase 4: Execute + Report
