@@ -53,7 +53,9 @@ class SiteDiscovery:
                 continue
 
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                await page.goto(url, wait_until="load", timeout=30_000)
+                # รอ JS render สำหรับ SPA (React/Vue/Angular) ก่อนเก็บ links
+                await page.wait_for_timeout(500)
                 visited.add(url)
                 await self._visit_and_record(crawler, page)
                 pages_visited += 1
