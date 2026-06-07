@@ -20,9 +20,9 @@ async def test_discover_returns_sfg_store(tmp_path):
     sd = SiteDiscovery(max_pages=2, max_depth=1)
 
     mock_page = AsyncMock()
-    mock_page.url = "https://example.com"
+    mock_page.url = "https://example.com/other"  # ต่างจาก start_url → ต้อง goto
     mock_page.goto = AsyncMock()
-    mock_page.evaluate = AsyncMock(return_value=[])  # no links found
+    mock_page.evaluate = AsyncMock(return_value=[])
 
     mock_node = MagicMock()
     mock_node.node_id = "abc123"
@@ -32,5 +32,20 @@ async def test_discover_returns_sfg_store(tmp_path):
                                    db_path=tmp_path / "sfg.db")
 
     assert store is not None
-    # discover was called once (the seed url)
     mock_page.goto.assert_called_once()
+
+
+async def test_discover_skips_goto_when_already_on_page(tmp_path):
+    sd = SiteDiscovery(max_pages=2, max_depth=1)
+
+    mock_page = AsyncMock()
+    mock_page.url = "https://example.com"  # เดียวกับ start_url → ไม่ต้อง goto
+    mock_page.goto = AsyncMock()
+    mock_page.evaluate = AsyncMock(return_value=[])
+
+    with patch.object(sd, "_visit_and_record", return_value=MagicMock()):
+        store = await sd.discover(mock_page, "https://example.com",
+                                   db_path=tmp_path / "sfg2.db")
+
+    assert store is not None
+    mock_page.goto.assert_not_called()

@@ -53,9 +53,13 @@ class SiteDiscovery:
                 continue
 
             try:
-                await page.goto(url, wait_until="load", timeout=30_000)
-                # รอ JS render สำหรับ SPA (React/Vue/Angular) ก่อนเก็บ links
-                await page.wait_for_timeout(500)
+                # ถ้าอยู่หน้าเดิมอยู่แล้ว ไม่ต้อง goto (ป้องกัน SPA reload ก่อน render)
+                current = page.url.split("?")[0].split("#")[0]
+                target = url.split("?")[0].split("#")[0]
+                if current != target:
+                    await page.goto(url, wait_until="networkidle", timeout=30_000)
+                else:
+                    await page.wait_for_load_state("networkidle", timeout=10_000)
                 visited.add(url)
                 await self._visit_and_record(crawler, page)
                 pages_visited += 1
@@ -64,10 +68,19 @@ class SiteDiscovery:
                 )
 
                 if depth < self.max_depth:
-                    links: list[str] = await page.evaluate(
-                        "() => Array.from(document.querySelectorAll('a[href]'))"
-                        ".map(a => a.href).filter(h => h.startsWith('http'))"
-                    )
+                    links: list[str] = await page.evaluate("""
+                        () => {
+                            const hrefs = new Set();
+                            document.querySelectorAll('a[href]').forEach(a => {
+                                const h = a.href;
+                                if (h && h.startsWith('http') && !h.endsWith('#') && !/#$/.test(h)) {
+                                    hrefs.add(h);
+                                }
+                            });
+                            return Array.from(hrefs);
+                        }
+                    """)
+                    logger.debug(f"SiteDiscovery: found {len(links)} valid links on {url}: {links[:5]}")
                     for link in links:
                         clean = link.split("?")[0].split("#")[0]
                         if urlparse(clean).netloc == base_domain and clean not in visited:
