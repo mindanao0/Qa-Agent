@@ -58,55 +58,58 @@ class SiteExplorer:
         self._crawler: SFGCrawler | None = None
 
     async def explore(self, page: Page, discovered_urls: list[str]) -> NavigationMap:
-        import tempfile, pathlib
-        sfg_path = pathlib.Path(tempfile.mkdtemp(prefix="uqa_explore_")) / "sfg.db"
+        import tempfile, pathlib, shutil
+        tmp_dir = pathlib.Path(tempfile.mkdtemp(prefix="uqa_explore_"))
+        sfg_path = tmp_dir / "sfg.db"
         self._sfg_store = SFGStore(db_path=sfg_path)
         self._crawler = SFGCrawler(self._sfg_store, Grounder(), CrawlerConfig())
+        try:
+            base_domain = urlparse(page.url).netloc
+            base_url = f"{urlparse(page.url).scheme}://{base_domain}"
+            start = time.monotonic()
 
-        base_domain = urlparse(page.url).netloc
-        base_url = f"{urlparse(page.url).scheme}://{base_domain}"
-        start = time.monotonic()
+            pages: list[ExploredPage] = []
+            flows: list[NavigationFlow] = []
+            visited_actions: set[str] = set()
+            visit_count: dict[str, int] = {}
+            queue: deque[tuple[str, int]] = deque((u, 0) for u in discovered_urls)
 
-        pages: list[ExploredPage] = []
-        flows: list[NavigationFlow] = []
-        visited_actions: set[str] = set()
-        visit_count: dict[str, int] = {}
-        queue: deque[tuple[str, int]] = deque((u, 0) for u in discovered_urls)
+            while queue and len(pages) < self._cfg.max_pages:
+                url, depth = queue.popleft()
+                curl = _clean_url(url)
+                if depth > self._cfg.max_depth:
+                    continue
+                if visit_count.get(curl, 0) >= self._cfg.max_visits_per_url:
+                    continue
+                if (time.monotonic() - start) / 60.0 >= self._cfg.explore_timeout_min:
+                    logger.info("SiteExplorer: timeout reached")
+                    break
+                visit_count[curl] = visit_count.get(curl, 0) + 1
 
-        while queue and len(pages) < self._cfg.max_pages:
-            url, depth = queue.popleft()
-            curl = _clean_url(url)
-            if depth > self._cfg.max_depth:
-                continue
-            if visit_count.get(curl, 0) >= self._cfg.max_visits_per_url:
-                continue
-            if (time.monotonic() - start) / 60.0 >= self._cfg.explore_timeout_min:
-                logger.info("SiteExplorer: timeout reached")
-                break
-            visit_count[curl] = visit_count.get(curl, 0) + 1
+                try:
+                    explored, new_urls, page_flows = await self._explore_page(
+                        page, url, depth, base_domain, visited_actions
+                    )
+                except Exception as exc:
+                    logger.warning(f"SiteExplorer: page {url} failed — {exc!r}")
+                    continue
 
-            try:
-                explored, new_urls, page_flows = await self._explore_page(
-                    page, url, depth, base_domain, visited_actions
+                pages.append(explored)
+                flows.extend(page_flows)
+                logger.info(
+                    f"  Pages found: {len(pages)} | Actions: {len(explored.actions)} | Flows: {len(flows)}"
                 )
-            except Exception as exc:
-                logger.warning(f"SiteExplorer: page {url} failed — {exc!r}")
-                continue
+                for nu in new_urls:
+                    ncu = _clean_url(nu)
+                    if urlparse(ncu).netloc == base_domain and visit_count.get(ncu, 0) == 0:
+                        queue.append((nu, depth + 1))
 
-            pages.append(explored)
-            flows.extend(page_flows)
-            logger.info(
-                f"  Pages found: {len(pages)} | Actions: {len(explored.actions)} | Flows: {len(flows)}"
+            return NavigationMap(
+                base_url=base_url, pages=pages, flows=flows,
+                explored_at_iso="",
             )
-            for nu in new_urls:
-                ncu = _clean_url(nu)
-                if urlparse(ncu).netloc == base_domain and visit_count.get(ncu, 0) == 0:
-                    queue.append((nu, depth + 1))
-
-        return NavigationMap(
-            base_url=base_url, pages=pages, flows=flows,
-            explored_at_iso="",
-        )
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     async def _explore_page(
         self, page: Page, url: str, depth: int, base_domain: str,
@@ -198,13 +201,11 @@ class SiteExplorer:
 
     @staticmethod
     def _locate(page: Page, cand: ElementCandidate):
-        # ARIA primary, selector fallback
+        # ARIA role+name primary, then text. No CSS selectors (project rule).
         if cand.role and cand.name:
             return page.get_by_role(cand.role, name=cand.name).first
         if cand.name:
             return page.get_by_text(cand.name).first
-        if cand.selector:
-            return page.locator(cand.selector).first
         return page.get_by_text(cand.label).first
 
     async def _snapshot_state(self, page: Page) -> str:
