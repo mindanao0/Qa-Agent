@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import pathlib
+import re
 import time
+from urllib.parse import urljoin, urlparse
 
 from loguru import logger
 from playwright.async_api import Page
@@ -20,31 +22,38 @@ from src.universal_qa.reporters.terminal import TerminalReporter
 _XSS_PAYLOAD = "<script>window.__xss_fired=true;</script>"
 _SQLI_PAYLOAD = "' OR '1'='1"
 
-_NAV_KEYWORDS = ("navigate", "goto", "go to", "open", "visit", "เปิดหน้า", "ไปที่", "เปิด")
+# Thai action keywords → English equivalents ที่ HypothesisExecutor เข้าใจ
+_THAI_NAV = re.compile(r'^(เปิดหน้า|ไปที่หน้า|ไปที่|นำทางไปยัง|เปิด)\s+', re.IGNORECASE)
+_THAI_FILL = re.compile(r'^(กรอก|พิมพ์|ใส่ข้อมูล|ใส่)\s+', re.IGNORECASE)
+_THAI_CLICK = re.compile(r'^(คลิกปุ่ม|คลิกลิงก์|คลิก|กดปุ่ม|กด)\s+', re.IGNORECASE)
 
 
 def _normalize_steps(steps: list[str], source_url: str) -> list[str]:
-    """แก้ step ที่ navigate ด้วย relative path ให้เป็น full URL.
+    """แปล Thai action keywords → English และแก้ relative path → full URL.
 
-    ตัวอย่าง:
-      "navigate to /products" + source_url="https://x.com/login"
-      → "navigate to https://x.com/products"
+    ใช้เฉพาะตอนส่งให้ HypothesisExecutor — report แสดง steps ภาษาไทยเดิม
     """
-    from urllib.parse import urlparse, urljoin
     base = "{u.scheme}://{u.netloc}".format(u=urlparse(source_url))
     fixed = []
     for step in steps:
-        lower = step.lower()
-        is_nav = any(kw in lower for kw in _NAV_KEYWORDS)
+        # 1. แปล Thai keywords เป็น English
+        if _THAI_NAV.match(step):
+            step = _THAI_NAV.sub("navigate to ", step)
+        elif _THAI_FILL.match(step):
+            step = _THAI_FILL.sub("fill ", step)
+        elif _THAI_CLICK.match(step):
+            step = _THAI_CLICK.sub("click ", step)
+
+        # 2. แก้ relative path → full URL สำหรับ navigate steps
+        is_nav = step.lower().startswith("navigate")
         has_http = "http://" in step or "https://" in step
         if is_nav and not has_http:
-            # หา path ที่ขึ้นต้นด้วย / หรือข้อความ quoted
-            import re
             path_match = re.search(r'["\']?(/[\w/\-]*)["\']?', step)
             if path_match:
                 path = path_match.group(1)
                 full_url = urljoin(base + "/", path.lstrip("/"))
                 step = re.sub(re.escape(path_match.group(0)), f" {full_url}", step, count=1).strip()
+
         fixed.append(step)
     return fixed
 
