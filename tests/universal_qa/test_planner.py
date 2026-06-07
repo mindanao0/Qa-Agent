@@ -57,3 +57,46 @@ def test_plan_security_titles_include_type():
     titles = [tc.title.lower() for tc in cases]
     assert any("xss" in t for t in titles)
     assert any("sql" in t for t in titles)
+
+
+from src.universal_qa.explorer.nav_map import (
+    ExploredAction, ExploredPage, NavigationFlow, NavigationMap,
+)
+
+
+def test_action_to_step_navigate():
+    planner = UniversalTestPlanner.__new__(UniversalTestPlanner)
+    a = ExploredAction(page_url="https://x.com/a", action_label="Home",
+                       element_role="link", element_name="Home",
+                       leads_to_url="https://x.com/home")
+    step = planner._action_to_step(a)
+    assert "https://x.com/home" in step
+    assert step.startswith("เปิดหน้า")
+
+
+def test_action_to_step_button_click():
+    planner = UniversalTestPlanner.__new__(UniversalTestPlanner)
+    a = ExploredAction(page_url="https://x.com/a", action_label="Buy",
+                       element_role="button", element_name="Checkout")
+    step = planner._action_to_step(a)
+    assert "Checkout" in step
+    assert "คลิกปุ่ม" in step
+
+
+def test_plan_flows_builds_test_case():
+    planner = UniversalTestPlanner.__new__(UniversalTestPlanner)
+    steps = [
+        ExploredAction(page_url="https://x.com/inv", action_label="Add to cart",
+                       element_role="button", element_name="Add to cart"),
+        ExploredAction(page_url="https://x.com/inv", action_label="Cart",
+                       element_role="link", element_name="Cart",
+                       leads_to_url="https://x.com/cart"),
+    ]
+    flow = NavigationFlow(flow_id="f1", name="checkout_flow", steps=steps,
+                          start_url="https://x.com/inv", end_url="https://x.com/cart")
+    cases = planner._plan_flows([flow])
+    assert len(cases) == 1
+    assert cases[0].type == "functional"
+    assert cases[0].priority == "high"
+    assert len(cases[0].steps) == 2
+    assert "https://x.com/cart" in cases[0].expected_outcome

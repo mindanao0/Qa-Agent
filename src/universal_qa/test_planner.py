@@ -8,6 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.contractskill.sfg import SFGNode, SFGStore
 from src.llm.instructor_client import InstructorClient, StructuredGenerationError
 from src.universal_qa.models import TestCase
+from src.universal_qa.explorer.nav_map import (
+    ExploredAction, ExploredPage, NavigationFlow, NavigationMap,
+)
 
 _PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 _XSS_PAYLOAD = "<script>alert('xss')</script>"
@@ -165,6 +168,72 @@ class UniversalTestPlanner:
     @staticmethod
     def _sort_by_priority(cases: list[TestCase]) -> list[TestCase]:
         return sorted(cases, key=lambda tc: _PRIORITY_ORDER.get(tc.priority, 1))
+
+    async def plan_from_map(self, nav_map: NavigationMap) -> list[TestCase]:
+        """Generate test cases from a NavigationMap (preferred over plan())."""
+        per_page = await self._plan_from_pages(nav_map.pages)
+        flows = self._plan_flows(nav_map.flows)
+        return self._sort_by_priority(per_page + flows)
+
+    async def _plan_from_pages(self, pages: list[ExploredPage]) -> list[TestCase]:
+        results: list[TestCase] = []
+        for page in pages:
+            # Accessibility — one per page
+            results.append(TestCase(
+                title=f"ตรวจสอบ Accessibility: {page.title}",
+                type="accessibility", priority="medium",
+                preconditions=[f"อยู่ที่หน้า {page.url}"],
+                steps=[
+                    f"เปิดหน้า {page.url}",
+                    "ตรวจสอบว่า element ที่โต้ตอบได้ทุกตัวมี accessible name",
+                    "ตรวจสอบว่ารูปภาพทุกรูปมี alt text",
+                    "ตรวจสอบว่าไม่มี decorative role บน element ที่โต้ตอบได้",
+                ],
+                expected_outcome="ไม่พบการละเมิดกฎ WCAG",
+                source_url=page.url,
+            ))
+            # Security — XSS + SQLi if page has form-like actions
+            if any(a.element_role == "button" for a in page.actions):
+                for kind, payload in (("XSS", _XSS_PAYLOAD), ("SQL", _SQLI_PAYLOAD)):
+                    results.append(TestCase(
+                        title=f"ทดสอบ {kind} injection: {page.title}",
+                        type="security", priority="high",
+                        preconditions=[f"อยู่ที่หน้า {page.url}"],
+                        steps=[
+                            f"เปิดหน้า {page.url}",
+                            f"กรอก {kind} payload ลงทุกช่องรับข้อมูล: {payload}",
+                            "กด submit form",
+                            f"ตรวจสอบว่า payload ไม่ทำงาน",
+                        ],
+                        expected_outcome=f"หน้าเว็บไม่ได้รับผลกระทบจาก {kind} payload",
+                        source_url=page.url,
+                    ))
+        return results
+
+    def _plan_flows(self, flows: list[NavigationFlow]) -> list[TestCase]:
+        cases: list[TestCase] = []
+        for flow in flows:
+            steps = [self._action_to_step(a) for a in flow.steps]
+            cases.append(TestCase(
+                title=f"ทดสอบ flow {flow.name} ตั้งแต่ต้นจนจบ",
+                type="functional", priority="high",
+                preconditions=[f"เริ่มที่หน้า {flow.start_url}"],
+                steps=steps or [f"เปิดหน้า {flow.start_url}"],
+                expected_outcome=f"เข้าหน้า {flow.end_url} สำเร็จ",
+                source_url=flow.start_url,
+            ))
+        return cases
+
+    @staticmethod
+    def _action_to_step(action: ExploredAction) -> str:
+        if action.leads_to_url:
+            return f"เปิดหน้า {action.leads_to_url}"
+        name = action.element_name or action.action_label
+        if action.element_role == "button":
+            return f'คลิกปุ่ม "{name}"'
+        if action.element_role == "link":
+            return f'คลิก "{name}"'
+        return f'คลิก "{name}"'
 
 
 __all__ = ["UniversalTestPlanner"]
