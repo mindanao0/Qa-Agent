@@ -95,7 +95,7 @@ class HTMLReporter:
                 b64 = base64.b64encode(img_bytes).decode()
                 screenshot_html = (
                     f'<div class="screenshot">'
-                    f'<img alt="screenshot" data-inline="data:image/png;base64,{b64}"/>'
+                    f'<img src="data:image/png;base64,{b64}" alt="screenshot"/>'
                     f'</div>'
                 )
             except Exception:

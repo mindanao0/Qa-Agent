@@ -77,7 +77,7 @@ def test_html_reporter_is_self_contained(tmp_path):
     path = reporter.generate([_make_result("T", passed=True)])
     content = path.read_text(encoding="utf-8")
     assert "<style>" in content
-    assert "src=" not in content  # no external stylesheet/script src
+    assert 'src="http' not in content  # no external http/https src links
 
 
 def test_html_reporter_has_filter_controls(tmp_path):
