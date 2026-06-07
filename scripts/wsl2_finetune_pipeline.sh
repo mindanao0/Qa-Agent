@@ -47,11 +47,27 @@ ok "GPU visible."
 # ── Step 2 — Python venv ─────────────────────────────────────────────────────
 log "Step 2/4 — Python env (${VENV_DIR})"
 
-if [[ ! -d "${VENV_DIR}" ]]; then
-    log "  Creating venv with Python 3.11..."
-    # Try python3.11 first, fall back to python3
-    PYTHON_BIN="$(command -v python3.11 2>/dev/null || command -v python3)"
-    "${PYTHON_BIN}" -m venv "${VENV_DIR}"
+# Install uv (handles Python + venv without OS package requirements)
+if ! command -v uv &>/dev/null; then
+    log "  Installing uv..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="${HOME}/.local/bin:${HOME}/.cargo/bin:${PATH}"
+fi
+export PATH="${HOME}/.local/bin:${HOME}/.cargo/bin:${PATH}"
+
+# Ensure C compiler present (triton compiles CUDA utils at first import)
+if ! command -v gcc &>/dev/null; then
+    log "  Installing build-essential (gcc needed by triton)..."
+    sudo apt-get install -y build-essential 2>&1 | grep -E "^(Get|Inst|Setting|Processing|done)" || true
+    command -v gcc &>/dev/null || { err "gcc still missing after apt-get — run: sudo apt-get install -y build-essential"; exit 1; }
+fi
+
+if [[ ! -f "${VENV_DIR}/bin/activate" ]]; then
+    rm -rf "${VENV_DIR}"   # remove any broken partial venv
+    log "  Installing Python 3.11 via uv..."
+    uv python install 3.11
+    log "  Creating venv..."
+    uv venv "${VENV_DIR}" --python 3.11
     ok "  venv created."
 fi
 
@@ -59,13 +75,10 @@ fi
 source "${VENV_DIR}/bin/activate"
 log "  Python: $(python --version)"
 
-# Install/upgrade pip silently
-python -m pip install --upgrade pip --quiet
-
 # PyTorch with CUDA 12.4 (only if not already a CUDA build)
 if ! python -c "import torch; assert torch.cuda.is_available(), 'no cuda'" &>/dev/null; then
     log "  Installing PyTorch cu124..."
-    pip install --quiet torch torchvision torchaudio \
+    uv pip install torch torchvision torchaudio \
         --index-url https://download.pytorch.org/whl/cu124
 fi
 CUDA_OK=$(python -c "import torch; print(torch.cuda.is_available())")
@@ -78,11 +91,23 @@ ok "  torch $(python -c 'import torch; print(torch.__version__)') | CUDA ${CUDA_
 # Unsloth + training stack
 if ! python -c "import unsloth" &>/dev/null; then
     log "  Installing Unsloth + training stack (first time, ~5 min)..."
-    pip install --quiet "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
-    pip install --quiet --no-deps trl peft accelerate bitsandbytes
-    pip install --quiet transformers datasets sentencepiece protobuf pydantic
+    uv pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
+    uv pip install --no-deps trl peft accelerate bitsandbytes
+    uv pip install transformers datasets sentencepiece protobuf pydantic setuptools wheel
+    # torchao 0.17.0 (pulled by unsloth) requires torch >= 2.7 API (register_constant).
+    # Downgrade to a version compatible with torch 2.6.0.
+    uv pip install "torchao==0.9.0"
 fi
 ok "  Unsloth ready."
+
+# Ensure torchao is compatible with torch 2.6 (0.17.0 requires torch>=2.7 API)
+TORCHAO_VER=$(python -c "import torchao; print(torchao.__version__)" 2>/dev/null || echo "none")
+if [[ "${TORCHAO_VER}" != "0.9.0" ]]; then
+    log "  Pinning torchao to 0.9.0 (found ${TORCHAO_VER}, incompatible with torch 2.6)..."
+    uv pip install "torchao==0.9.0" --quiet
+fi
+# Ensure setuptools present (triton needs it at runtime)
+python -c "import setuptools" 2>/dev/null || uv pip install setuptools wheel --quiet
 
 # Free VRAM guard
 python - <<'PY'
@@ -90,8 +115,8 @@ import sys, torch
 free, total = torch.cuda.mem_get_info()
 free_gb = free / 1e9
 print(f"  VRAM: {free_gb:.2f} GB free / {total/1e9:.1f} GB total")
-if free_gb < 5.5:
-    print(f"ERROR: Need ≥5.5 GB free, have {free_gb:.2f} GB. Close GPU apps.")
+if free_gb < 4.5:
+    print(f"ERROR: Need ≥4.5 GB free, have {free_gb:.2f} GB. Close GPU apps.")
     sys.exit(1)
 PY
 ok "  VRAM sufficient."

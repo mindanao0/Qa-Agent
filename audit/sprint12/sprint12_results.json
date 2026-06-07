@@ -1,0 +1,21 @@
+{
+  "race_scenarios_tested": 5,
+  "real_backend_confirmed": true,
+  "race_conditions_detected": 2,
+  "interleaving_patterns_found": 5,
+  "semantic_hash_method": true,
+  "otel_spans_emitted": 10,
+  "regression": false,
+  "sprint12_status": "PASS",
+  "backend_used": "https://realworld.habsida.net",
+  "backend_probe_note": null,
+  "pass_rate": 1.0,
+  "audit_trail_entries": 8,
+  "interleaving_patterns": [
+    "s1_concurrent_register_2: agent1-start, agent0-start, agent0-end(422), agent1-end(200)",
+    "s2_concurrent_register_3: agent2-start, agent0-start, agent1-start, agent0-end(422), agent2-end(200), agent1-end(422)",
+    "s3_concurrent_read_tags_3: agent2-start, agent0-start, agent1-start, agent2-end(200), agent1-end(200), agent0-end(200)",
+    "s4_concurrent_read_articles_2: agent1-start, agent0-start, agent1-end(200), agent0-end(200)",
+    "s5_concurrent_read_tags_2: agent1-start, agent0-start, agent0-end(200), agent1-end(200)"
+  ]
+}

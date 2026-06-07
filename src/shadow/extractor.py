@@ -20,19 +20,27 @@ class ShadowDOMExtractor:
     """CDP + JS-fallback Shadow DOM extractor. No required constructor args."""
 
     async def extract(self, page: Any) -> list[ShadowNode]:
-        # Primary: CDP DOM.getFlattenedDocument with pierce
-        cdp_nodes = await self._extract_cdp(page)
-        if cdp_nodes:
-            return cdp_nodes
+        # Primary: CDP DOM.getFlattenedDocument with pierce.
+        # An empty list from CDP is authoritative (no shadow roots on page).
+        # Only fall back to JS when CDP itself raises, and re-raise the original
+        # CDP error if the JS fallback also fails.
+        cdp_exc: Exception | None = None
+        try:
+            return await self._extract_cdp(page)
+        except Exception as exc:
+            cdp_exc = exc
+
         # Fallback: JS-based traversal for custom elements whose shadow roots
         # are not reported by CDP DOM.getFlattenedDocument (Chromium quirk with
         # declarative / autonomous custom elements on some sites).
-        return await self._extract_js(page)
+        try:
+            return await self._extract_js(page)
+        except Exception:
+            raise cdp_exc  # type: ignore[misc]
 
     async def _extract_cdp(self, page: Any) -> list[ShadowNode]:
         client = await page.context.new_cdp_session(page)
         try:
-            await client.send("DOM.enable")
             result = await client.send(
                 "DOM.getFlattenedDocument", {"depth": -1, "pierce": True}
             )

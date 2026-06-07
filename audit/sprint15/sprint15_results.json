@@ -1,0 +1,13 @@
+{
+  "parallel_workers_used": 3,
+  "throughput_gain": 2.3828,
+  "sequential_tps": 0.1218,
+  "parallel_tps": 0.2903,
+  "vram_stable": true,
+  "peak_vram_mb": 980.4,
+  "test_pass_rate": 1.0,
+  "worker_isolation_confirmed": true,
+  "otel_spans_emitted": 27,
+  "regression": false,
+  "sprint15_status": "PASS"
+}

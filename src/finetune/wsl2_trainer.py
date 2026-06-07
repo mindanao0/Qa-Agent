@@ -50,11 +50,11 @@ logging.basicConfig(
 logger = logging.getLogger("wsl2_trainer")
 
 # ── Constants (6 GB safe) ────────────────────────────────────────────────────
-BASE_MODEL          = "unsloth/Qwen2.5-Coder-7B-Instruct-bnb-4bit"
+BASE_MODEL          = "unsloth/Qwen2.5-Coder-1.5B-Instruct-bnb-4bit"   # 7B fills all VRAM; 1.5B leaves ~4GB for compute
 MAX_SEQ_LENGTH      = 1024
 LORA_R              = 8
 LORA_ALPHA          = 16
-LORA_DROPOUT        = 0.05
+LORA_DROPOUT        = 0.0    # Unsloth recommendation for 4-bit
 TARGET_MODULES      = ["q_proj", "v_proj"]
 BATCH_SIZE          = 1
 GRAD_ACCUM_STEPS    = 8
@@ -64,8 +64,8 @@ WARMUP_STEPS        = 10
 LOG_STEPS           = 10
 SAVE_STEPS          = 50
 
-VRAM_WARN_GB        = 0.40   # 400 MB free → warning
-VRAM_CRIT_GB        = 0.20   # 200 MB free → emergency stop
+VRAM_WARN_GB        = 0.15   # 150 MB free → warning (tighter — seq_len=512 uses less)
+VRAM_CRIT_GB        = 0.05   # 50 MB free → emergency stop (PyTorch OOM fires before this)
 VRAM_LOG_EVERY_SEC  = 30
 VRAM_POLL_EVERY_SEC = 5
 
@@ -309,7 +309,22 @@ def prepare_dataset(jsonl_path: Path, tokenizer: Any, max_seq_length: int) -> An
         raise ValueError(f"Dataset empty: {jsonl_path}")
     logger.info(f"Loaded {len(raw)} raw examples from {jsonl_path}")
 
-    qa: list[dict[str, Any]] = [r for r in raw if r.get("messages")]
+    # Support both ChatML {"messages": [...]} and prompt/completion {"prompt": ..., "completion": ...}
+    def _to_messages(r: dict[str, Any]) -> list[dict[str, str]] | None:
+        if r.get("messages"):
+            return r["messages"]
+        if r.get("prompt") and r.get("completion"):
+            return [
+                {"role": "user",      "content": r["prompt"]},
+                {"role": "assistant", "content": r["completion"]},
+            ]
+        return None
+
+    qa: list[dict[str, Any]] = []
+    for r in raw:
+        msgs = _to_messages(r)
+        if msgs is not None:
+            qa.append({**r, "messages": msgs})
     mixed = _interleave_general(qa)
 
     formatted: list[dict[str, str]] = []
@@ -361,6 +376,8 @@ def load_model_for_training() -> tuple[Any, Any]:
         max_seq_length=MAX_SEQ_LENGTH,
         dtype=None,            # auto-pick fp16
         load_in_4bit=True,
+        device_map={"": 0},    # force all layers onto GPU 0; avoids conservative
+                               # device_map="auto" splitting layers to CPU/disk
     )
 
     logger.info(
@@ -376,6 +393,19 @@ def load_model_for_training() -> tuple[Any, Any]:
         use_gradient_checkpointing="unsloth",
         random_state=42,
     )
+
+    # Unsloth patches SFTTrainer to inject args.eos_token = "<EOS_TOKEN>" regardless
+    # of what we pass. Qwen2's tokenizer doesn't have <EOS_TOKEN>, so TRL's
+    # convert_tokens_to_ids returns None → ValueError.
+    # Fix: register <EOS_TOKEN> in the tokenizer's added_tokens_encoder pointing to
+    # the same ID as <|im_end|>, so TRL's validation passes and the correct EOS is used.
+    _eos_id = tokenizer.convert_tokens_to_ids("<|im_end|>")  # 151645 for Qwen2
+    tokenizer.eos_token = "<|im_end|>"
+    tokenizer.eos_token_id = _eos_id
+    # Make <EOS_TOKEN> resolve to the correct ID so TRL's check doesn't raise
+    tokenizer.added_tokens_encoder["<EOS_TOKEN>"] = _eos_id
+    logger.info(f"Registered <EOS_TOKEN>→{_eos_id} (<|im_end|>) in tokenizer vocab")
+
     return model, tokenizer
 
 
@@ -395,8 +425,7 @@ def train(
     Returns the path of the final checkpoint directory.
     """
     import torch  # noqa: F401   (caller already imports indirectly)
-    from trl import SFTTrainer                              # type: ignore[import-not-found]
-    from transformers import TrainingArguments              # type: ignore[import-not-found]
+    from transformers import Trainer, TrainingArguments, DataCollatorForLanguageModeling  # type: ignore[import-not-found]
     from transformers.trainer_callback import TrainerCallback  # type: ignore[import-not-found]
 
     output_dir = output_dir.expanduser()
@@ -406,24 +435,25 @@ def train(
     watchdog.start()
 
     model, tokenizer = load_model_for_training()
-    dataset = prepare_dataset(dataset_path.expanduser(), tokenizer, MAX_SEQ_LENGTH)
 
-    args = TrainingArguments(
-        output_dir=str(output_dir),
-        per_device_train_batch_size=BATCH_SIZE,
-        gradient_accumulation_steps=GRAD_ACCUM_STEPS,
-        warmup_steps=WARMUP_STEPS,
-        max_steps=max_steps,
-        learning_rate=LEARNING_RATE,
-        fp16=True,
-        logging_steps=LOG_STEPS,
-        save_steps=SAVE_STEPS,
-        save_total_limit=3,
-        lr_scheduler_type="cosine",
-        optim="adamw_8bit",
-        seed=42,
-        report_to="none",
+    # Tokenize the pre-formatted "text" dataset for the standard Trainer.
+    # Using Trainer instead of SFTTrainer avoids Unsloth's <EOS_TOKEN> injection issue.
+    raw_dataset = prepare_dataset(dataset_path.expanduser(), tokenizer, MAX_SEQ_LENGTH)
+
+    def tokenize_fn(batch):
+        out = tokenizer(
+            batch["text"],
+            truncation=True,
+            max_length=MAX_SEQ_LENGTH,
+            padding=False,
+        )
+        out["labels"] = out["input_ids"].copy()
+        return out
+
+    tokenized = raw_dataset.map(
+        tokenize_fn, batched=True, remove_columns=["text"], num_proc=2,
     )
+    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
     class _StepLogger(TrainerCallback):
         def on_log(self_inner, args, state, control, logs=None, **kw):  # noqa: N805
@@ -441,19 +471,32 @@ def train(
             except Exception:
                 vram_msg = "?"
             logger.info(
-                f"Step {state.global_step}/{args.max_steps} | "
+                f"Step {state.global_step}/{max_steps} | "
                 f"Loss: {loss:.4f} | VRAM: {vram_msg}"
             )
 
-    trainer = SFTTrainer(
+    training_args = TrainingArguments(
+        output_dir=str(output_dir),
+        per_device_train_batch_size=BATCH_SIZE,
+        gradient_accumulation_steps=GRAD_ACCUM_STEPS,
+        warmup_steps=WARMUP_STEPS,
+        max_steps=max_steps,
+        learning_rate=LEARNING_RATE,
+        fp16=True,
+        logging_steps=LOG_STEPS,
+        save_steps=SAVE_STEPS,
+        save_total_limit=3,
+        lr_scheduler_type="cosine",
+        optim="adamw_8bit",
+        seed=42,
+        report_to="none",
+    )
+
+    trainer = Trainer(
         model=model,
-        tokenizer=tokenizer,
-        train_dataset=dataset,
-        dataset_text_field="text",
-        max_seq_length=MAX_SEQ_LENGTH,
-        dataset_num_proc=2,
-        packing=False,
-        args=args,
+        args=training_args,
+        train_dataset=tokenized,
+        data_collator=data_collator,
         callbacks=[_StepLogger()],
     )
 

@@ -1,0 +1,15 @@
+{
+  "target": "saucedemo",
+  "cycles_completed": 3,
+  "states_discovered": 7,
+  "tests_generated": 6,
+  "tests_passed": 3,
+  "bugs_found": [
+    "problem_user: all 6 product images share the same broken src (/static/media/sl-404.168b1cce10384b857a6f.jpg)",
+    "problem_user: sort 'Name (Z to A)' does not reorder products (order unchanged: ['Sauce Labs Backpack', 'Sauce Labs Bike Light'])",
+    "problem_user: add-to-cart failed for 4/6 item(s) (indices [2, 3, 4, 5])",
+    "problem_user: 3 JS console error(s) \u2014 e.g. [error] Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ],
+  "anomalies": [],
+  "report_path": "audit/ci/saucedemo_report.md"
+}

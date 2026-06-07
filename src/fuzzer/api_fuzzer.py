@@ -12,11 +12,18 @@ from loguru import logger
 from playwright.async_api import Page
 from pydantic import BaseModel, ConfigDict
 
+from src.fuzzer.anomaly_classifier import AnomalyClassifier
+from src.fuzzer.anomaly_classifier import FuzzResult as ClassifiedResult
 from src.fuzzer.fuzz_vectors import BASE_VECTORS
 from src.llm.instructor_client import InstructorClient, StructuredGenerationError
 from src.observability.tracer import OTelTracer
 
 _FUZZER_SEMAPHORE = asyncio.Semaphore(1)
+
+# Sprint 13 safety knobs (carry-forward rules).
+_MIN_SPACING_S = 0.5          # ≤ 2 req/sec per endpoint
+_BREAKER_CONSECUTIVE_5XX = 3  # pause endpoint after this many consecutive 5xx
+_REQUEST_TIMEOUT_MS = 12_000
 
 BLOCKED_ACTION_PATTERNS = re.compile(
     r"delete|remove|transfer|payment|password", re.IGNORECASE
@@ -48,6 +55,17 @@ class FuzzResult(BaseModel):
 class _FuzzVectors(BaseModel):
     model_config = ConfigDict(extra="forbid")
     fuzz_vectors: list[str]
+
+
+class FuzzRequest(BaseModel):
+    """A prepared fuzz injection (Sprint 13): a concrete request carrying one vector."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    vector: str
+    method: str
+    url: str
+    body: dict | None = None
 
 
 class AutonomousAPIFuzzer:
@@ -147,6 +165,89 @@ class AutonomousAPIFuzzer:
 
         return results
 
+    async def fuzz_endpoint(
+        self,
+        endpoint_label: str,
+        requests: list[FuzzRequest],
+        page: Page,
+        classifier: AnomalyClassifier,
+        response_schema: dict | None = None,
+    ) -> list[ClassifiedResult]:
+        """Send prepared fuzz requests against a REAL endpoint and classify each (Sprint 13).
+
+        Honors the carry-forward safety rules: ≥0.5s spacing (≤2 req/sec) and a
+        circuit breaker that skips the endpoint's remaining vectors after
+        ``_BREAKER_CONSECUTIVE_5XX`` consecutive 5xx (the spec's "pause 10 minutes"
+        intent — a literal sleep is impractical in a measurement run, so we skip the
+        remainder and let the caller record the pause). Wrapped in an OTel span.
+        """
+        results: list[ClassifiedResult] = []
+        consecutive_5xx = 0
+        last_ts = 0.0
+        tripped = False
+
+        async with self._tracer.span("fuzz.endpoint", endpoint=endpoint_label):
+            for fr in requests:
+                if consecutive_5xx >= _BREAKER_CONSECUTIVE_5XX:
+                    tripped = True
+                    logger.warning(
+                        f"fuzz_endpoint: breaker tripped for {endpoint_label!r} after "
+                        f"{consecutive_5xx} consecutive 5xx — skipping remaining vectors"
+                    )
+                    break
+
+                elapsed = time.monotonic() - last_ts
+                if last_ts and elapsed < _MIN_SPACING_S:
+                    await asyncio.sleep(_MIN_SPACING_S - elapsed)
+
+                status, body, duration_ms, timed_out = await self._send_one(page, fr)
+                last_ts = time.monotonic()
+
+                results.append(classifier.classify(
+                    endpoint=endpoint_label,
+                    vector=fr.vector,
+                    status_code=status,
+                    duration_ms=duration_ms,
+                    body=body,
+                    response_schema=response_schema,
+                    timed_out=timed_out,
+                ))
+
+                consecutive_5xx = consecutive_5xx + 1 if status >= 500 else 0
+
+        if tripped:
+            logger.info(f"fuzz_endpoint: {endpoint_label!r} paused (breaker)")
+        return results
+
+    async def _send_one(
+        self, page: Page, fr: FuzzRequest
+    ) -> tuple[int, object, float, bool]:
+        """Issue one real request via page.request → (status, body, duration_ms, timed_out)."""
+        start = time.monotonic()
+        try:
+            method = fr.method.upper()
+            if method == "POST":
+                resp = await page.request.post(fr.url, data=fr.body or {}, timeout=_REQUEST_TIMEOUT_MS)
+            elif method == "PUT":
+                resp = await page.request.put(fr.url, data=fr.body or {}, timeout=_REQUEST_TIMEOUT_MS)
+            else:
+                resp = await page.request.get(fr.url, timeout=_REQUEST_TIMEOUT_MS)
+        except Exception as exc:
+            duration_ms = (time.monotonic() - start) * 1000
+            logger.debug(f"_send_one: request did not complete {fr.url!r}: {exc!r}")
+            return 0, None, duration_ms, True
+
+        duration_ms = (time.monotonic() - start) * 1000
+        body: object = None
+        try:
+            body = await resp.json()
+        except Exception:
+            try:
+                body = await resp.text()
+            except Exception:
+                body = None
+        return resp.status, body, duration_ms, False
+
     async def _fuzz_one(self, target: FuzzTarget, page: Page, vector: str) -> FuzzResult:
         import urllib.parse as _urlparse
 
@@ -226,4 +327,4 @@ class AutonomousAPIFuzzer:
             return []
 
 
-__all__ = ["AutonomousAPIFuzzer", "FuzzResult", "FuzzTarget"]
+__all__ = ["AutonomousAPIFuzzer", "FuzzRequest", "FuzzResult", "FuzzTarget"]

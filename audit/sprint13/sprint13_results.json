@@ -1,0 +1,22 @@
+{
+  "endpoints_discovered": 7,
+  "schema_inferred": 5,
+  "fuzz_vectors_generated": 28,
+  "anomalies_found": 6,
+  "false_positive_rate": 0.0,
+  "otel_spans_emitted": 16,
+  "regression": false,
+  "sprint13_status": "PASS",
+  "backend_used": "https://realworld.habsida.net",
+  "real_backend_confirmed": true,
+  "pass_rate": 1.0,
+  "total_fuzz_requests": 28,
+  "anomaly_breakdown": {
+    "unexpected_status": 5,
+    "schema_drift": 1
+  },
+  "expected_4xx_demoted": 15,
+  "safe_2xx_not_flagged": 7,
+  "breaker_trips": 0,
+  "audit_trail_entries": 10
+}

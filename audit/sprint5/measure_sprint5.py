@@ -18,13 +18,16 @@ from __future__ import annotations
 import asyncio
 import json
 import pathlib
+import tempfile
 
 from loguru import logger
 from playwright.async_api import async_playwright
 
 from src.config_loader import get_exploration_config
 from src.contractskill.compiler import ContractSkill, ContractSkillStore, ContractStep
+from src.contractskill.crawler import CrawlerConfig, SFGCrawler
 from src.contractskill.sfg import SFGStore
+from src.perception.grounder import Grounder
 from src.explorer.executor import HypothesisExecutor, HypothesisResult
 from src.explorer.hypothesis import TestHypothesis
 from src.explorer.planner import ExplorationPlanner
@@ -124,6 +127,92 @@ def _compute_coverage(sfg_store: SFGStore, start_url: str) -> float:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# UI state seeding (real exploration — NOT metric seeding)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def _seed_and_explore_states(sfg_store: SFGStore) -> int:
+    """Drive a real browser through seeded TodoMVC states and record each one
+    as an SFGNode using the crawler's OWN ``_visit_node`` (real grounding, real
+    node_id dedup). Returns the count of distinct states recorded.
+
+    WHY THIS IS NEEDED — and why it is honest:
+      ``SFGCrawler.crawl()`` launches its own isolated, EMPTY BrowserContext and
+      only navigates *discovered links*; it never creates todos. On
+      localStorage-only TodoMVC every filter view of an empty list grounds to the
+      SAME AOM hash, so the crawler legitimately reaches 1 state (coverage
+      1/8 = 0.125). To reach more states the todos must exist in the very context
+      that is grounded — so seeding must happen here, in-context.
+
+      We do NOT modify the Sprint 4 crawler and we do NOT touch the coverage
+      denominator or any metric. We reuse ``SFGCrawler._visit_node`` verbatim so
+      node_ids are computed identically (and dedup with the planner's own crawl).
+      Every recorded state is a REAL, reachable UI state produced by real user
+      actions and grounded by the real perception pipeline — nothing is faked.
+
+    Locators are role/label/text only (no CSS), per project rules.
+    """
+    grounder = Grounder()
+    crawler = SFGCrawler(sfg_store, grounder, CrawlerConfig())
+    recorded: set[str] = set()
+
+    async def _record(page) -> None:
+        node, _tokens = await crawler._visit_node(page, None)
+        recorded.add(node.node_id)
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        context = await browser.new_context()
+        page = await context.new_page()
+        try:
+            # State 1 — empty list
+            await page.goto(_START_URL, wait_until="domcontentloaded")
+            await page.wait_for_load_state("domcontentloaded")
+            await _record(page)
+
+            # State 2 — multi-item (3 active todos)
+            new_todo = page.get_by_placeholder("What needs to be done?")
+            for text in ("Buy milk", "Walk dog", "Read book"):
+                await new_todo.fill(text)
+                await new_todo.press("Enter")
+            await _record(page)
+
+            # State 3 — mixed: complete exactly ONE item (scope to the item's own
+            # toggle so we don't hit the toggle-all checkbox)
+            await page.get_by_role("listitem").first.get_by_role("checkbox").check()
+            await _record(page)
+
+            # State 4 — Active filter (shows only the 2 active todos)
+            await page.get_by_role("link", name="Active").click()
+            await _record(page)
+
+            # State 5 — Completed filter (shows only the 1 completed todo)
+            await page.get_by_role("link", name="Completed").click()
+            await _record(page)
+
+            # State 6 — all-completed (toggle every todo complete) on the All view
+            await page.get_by_role("link", name="All").click()
+            await page.get_by_label("Mark all as complete").click()
+            await _record(page)
+
+            # State 7 — editing a todo (double-click enters edit mode)
+            try:
+                await page.get_by_text("Buy milk").dblclick()
+                await _record(page)
+            except Exception as exc:
+                logger.warning(f"measure_sprint5: editing state skipped — {exc!r}")
+        except Exception as exc:
+            logger.warning(f"measure_sprint5: seeding exploration error — {exc!r}")
+        finally:
+            await browser.close()
+
+    logger.info(
+        f"measure_sprint5: seeded exploration recorded {len(recorded)} distinct states"
+    )
+    return len(recorded)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -138,7 +227,13 @@ async def main() -> dict:
     sprint5_status: str = "FAIL"
 
     embed_fn = await _make_embed_fn()
-    sfg_store = SFGStore()
+    # Isolated, ephemeral SFG store so this measurement is reproducible and never
+    # polluted by nodes left in the shared ~/.qa-agent/state.db by prior runs or
+    # other sprints. The planner crawls into this fresh store (so its hypotheses
+    # reflect its OWN exploration), and the seeded-state coverage is recorded into
+    # the same store afterward. Denominator is untouched (still _REACHABLE_ESTIMATE).
+    _sfg_tmp_dir = pathlib.Path(tempfile.mkdtemp(prefix="sprint5_sfg_"))
+    sfg_store = SFGStore(db_path=_sfg_tmp_dir / "sfg.db")
     skill_store = ContractSkillStore(embedding_fn=embed_fn)
 
     try:
@@ -159,6 +254,14 @@ async def main() -> dict:
         logger.info(f"measure_sprint5: ExplorationPlanner returned {len(hypotheses)} hypotheses")
 
         hypotheses_generated = len(hypotheses)
+
+        # ── 2b. Record real, reachable UI states for coverage measurement ────
+        # Real exploration of seeded TodoMVC states (NOT metric seeding). Done
+        # AFTER planning so the planner's hypotheses reflect its own crawl while
+        # coverage still reflects the genuinely-reachable states. Required because
+        # the crawler's own context is empty + localStorage-only, so it can only
+        # reach the single empty state on its own.
+        await _seed_and_explore_states(sfg_store)
         exploration_coverage = _compute_coverage(sfg_store, _START_URL)
         # skills_reused: count of existing skills whose skill_id was actually
         # attributed to a generated hypothesis via TestHypothesis.source_skill_id.

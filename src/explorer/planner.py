@@ -36,6 +36,10 @@ _MAX_RETRIES = 2
 _COSINE_THRESHOLD = 0.7
 _MAX_UNCOVERED_FLOWS = 5
 _KEYWORD_OVERLAP_MIN = 2
+# Minimum fraction of the shorter goal's meaningful words that must be shared
+# for a hypothesis to be attributed to an existing ContractSkill. Earned, not
+# seeded — drives Sprint 5 `skills_reused`.
+_SKILL_MATCH_RATIO = 0.3
 _HYPOTHESIS_GENERATION_MODEL = DEFAULT_MODEL
 
 _STOPWORDS = frozenset({"the", "a", "an", "is", "are", "in", "on", "to", "of", "and", "or", "for"})
@@ -99,11 +103,61 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     return float(np.dot(va, vb) / (norm_a * norm_b))
 
 
+def _meaningful_words(text: str) -> set[str]:
+    """Lowercased content words: drop stopwords and tokens of length <= 2."""
+    return {w.lower() for w in text.split() if w.lower() not in _STOPWORDS and len(w) > 2}
+
+
 def _keyword_overlap(text_a: str, text_b: str) -> int:
-    """Return the count of common words (stopword-naive) between two strings."""
-    words_a = {w.lower() for w in text_a.split() if w.lower() not in _STOPWORDS and len(w) > 2}
-    words_b = {w.lower() for w in text_b.split() if w.lower() not in _STOPWORDS and len(w) > 2}
-    return len(words_a & words_b)
+    """Return the count of common content words between two strings."""
+    return len(_meaningful_words(text_a) & _meaningful_words(text_b))
+
+
+def _words_relate(a: str, b: str) -> bool:
+    """True if two content words are the same concept: equal, or one is a prefix
+    of the other with the shorter word >= 4 chars (e.g. mark/marking,
+    complete/completed). The 4-char floor avoids spurious short-prefix hits
+    (car/care). Captures genuine morphological variants, not fuzzy guesses."""
+    if a == b:
+        return True
+    shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+    return len(shorter) >= 4 and longer.startswith(shorter)
+
+
+def _match_skill(goal: str, skills: list[ContractSkill]) -> str | None:
+    """Attribute a hypothesis *goal* to an existing ContractSkill by genuine
+    keyword overlap of goal statements.
+
+    Returns the skill_id of the BEST-overlapping skill (highest shared fraction
+    of the shorter goal's meaningful words), provided it clears
+    ``_SKILL_MATCH_RATIO``; else None. Best-match (not first-match) so distinct
+    hypotheses attribute to their most-relevant skill, giving genuine skill
+    diversity. Pure keyword overlap — no LLM call (preserves the inference
+    Semaphore budget) and no artificial seeding: the match must be earned.
+    """
+    if not skills:
+        return None
+    goal_words = _meaningful_words(goal)
+    if not goal_words:
+        return None
+    best_id: str | None = None
+    best_ratio = 0.0
+    for skill in skills:
+        skill_words = _meaningful_words(skill.goal)
+        if not skill_words:
+            continue
+        # Count goal words that relate (equal or morphological prefix) to any
+        # skill word — so "marking"/"completed" attribute to "mark"/"complete".
+        overlap = sum(
+            1 for gw in goal_words if any(_words_relate(gw, sw) for sw in skill_words)
+        )
+        if overlap == 0:
+            continue
+        ratio = overlap / min(len(goal_words), len(skill_words))
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_id = skill.skill_id
+    return best_id if best_ratio >= _SKILL_MATCH_RATIO else None
 
 
 def _hypotheses_to_text(hypotheses: list[TestHypothesis]) -> str:
@@ -256,6 +310,7 @@ async def _hypothesis_node(state: PlannerState) -> dict:
     """Node 4: Generate TestHypothesis list from uncovered flows via LLM."""
     uncovered_flows: list[str] = state["uncovered_flows"]
     start_url: str = state["start_url"]
+    existing_skills: list[ContractSkill] = state["existing_skills"]
     existing_hypotheses: list[TestHypothesis] = state.get("hypotheses", [])
     revision_count: int = state.get("hypothesis_revision_count", 0)
 
@@ -294,6 +349,9 @@ async def _hypothesis_node(state: PlannerState) -> dict:
                 temperature=0.1,
             )
             for item in result.hypotheses:
+                # Attribute this hypothesis to the most-relevant existing skill
+                # (None if no genuine overlap) — drives Sprint 5 skills_reused.
+                source_skill_id = _match_skill(item.goal, existing_skills)
                 hypothesis = TestHypothesis(
                     hypothesis_id=None,  # type: ignore[arg-type]  # auto-generated
                     goal=item.goal,
@@ -301,6 +359,7 @@ async def _hypothesis_node(state: PlannerState) -> dict:
                     preconditions=item.preconditions,
                     steps=item.steps,
                     expected_outcome=item.expected_outcome,
+                    source_skill_id=source_skill_id,
                     confidence=item.confidence,
                 )
                 all_hypotheses.append(hypothesis)

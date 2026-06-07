@@ -73,14 +73,37 @@ def register_with_ollama(modelfile_path: Path, model_tag: str = MODEL_TAG) -> No
         print(result.stdout.strip())
 
 
+def _find_gguf() -> tuple[Path, Path] | None:
+    """Return (gguf_path, output_dir) searching both standard and Unsloth _gguf dirs."""
+    # Standard path
+    p = GGUF_DIR / GGUF_NAME
+    if p.exists():
+        return p, GGUF_DIR
+    # Unsloth appends _gguf — check that dir for any .gguf file
+    alt = Path("models/qwen2.5-coder-finetuned_gguf")
+    if alt.exists():
+        candidates = sorted(alt.glob("*.gguf"), key=lambda f: f.stat().st_size, reverse=True)
+        if candidates:
+            return candidates[0], alt
+    return None
+
+
 def main() -> int:
-    gguf_path = GGUF_DIR / GGUF_NAME
-    if not gguf_path.exists():
-        print(f"ERROR: GGUF file not found: {gguf_path}", file=sys.stderr)
-        print("Run export_gguf.py first.", file=sys.stderr)
+    found = _find_gguf()
+    if found is None:
+        print("ERROR: No .gguf file found in models/qwen2.5-coder-finetuned* directories.", file=sys.stderr)
+        print("Run the WSL2 pipeline first.", file=sys.stderr)
         return 1
+    gguf_path, output_dir = found
+    print(f"Using GGUF: {gguf_path}")
     try:
-        modelfile_path = write_modelfile(gguf_path=gguf_path, output_dir=GGUF_DIR)
+        # Use Unsloth's Modelfile if it exists (already has correct content)
+        unsloth_mf = output_dir / "Modelfile"
+        if unsloth_mf.exists():
+            modelfile_path = unsloth_mf
+            print(f"Using existing Modelfile: {modelfile_path}")
+        else:
+            modelfile_path = write_modelfile(gguf_path=gguf_path, output_dir=output_dir)
         register_with_ollama(modelfile_path)
         print(f"\nDone! Test with:")
         print(f'  ollama run {MODEL_TAG} "Generate a pytest test for login page"')

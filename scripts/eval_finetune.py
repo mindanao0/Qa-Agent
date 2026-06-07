@@ -7,7 +7,7 @@ Prerequisites:
     - data/training/val.jsonl  (51 examples)
     - Ollama running with qwen2.5-coder:7b-instruct-q4_K_M (base)
     - Ollama running with qa-agent-finetuned (from create_modelfile.py)
-    - models/finetune_output/training_metrics.json (from finetune.py)
+    - models/finetune_output/checkpoint-<N>/trainer_state.json
 
 Output: models/eval_results.json
 """
@@ -16,21 +16,26 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
+import os
+import pathlib
 import sys
-from pathlib import Path
 from typing import Literal
 
+import httpx
 from pydantic import BaseModel, ConfigDict
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-VAL_JSONL = Path("data/training/val.jsonl")
-METRICS_PATH = Path("models/finetune_output/training_metrics.json")
-EVAL_OUTPUT = Path("models/eval_results.json")
+VAL_JSONL = pathlib.Path("data/training/val.jsonl")
+FINETUNE_OUTPUT_DIR = pathlib.Path("models/finetune_output")
+EVAL_OUTPUT = pathlib.Path("models/eval_results.json")
 
 BASE_MODEL = "qwen2.5-coder:7b-instruct-q4_K_M"
 FT_MODEL = "qa-agent-finetuned"
+
+# Same env var as src/llm/adapter.py — lets WSL callers set host.docker.internal or Windows gateway IP
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 # ---------------------------------------------------------------------------
 # Acceptance thresholds (from spec)
@@ -59,6 +64,8 @@ class EvalResult(BaseModel):
     val_loss_final: float | None
     vram_peak_mb: float | None
     oom_errors: int
+    base_skipped: int
+    ft_skipped: int
     finetune_status: Literal["PASS", "FAIL"]
 
 
@@ -118,56 +125,85 @@ def score_completion(scoring_type: ScoringType, completion: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Async Ollama query
+# FIX 1 — Load trainer_state from latest checkpoint
 # ---------------------------------------------------------------------------
 
 
-async def query_model(
+def _load_trainer_state() -> dict:
+    """Load trainer_state.json from the latest checkpoint-* directory."""
+    output_dir = pathlib.Path("models/finetune_output")
+    checkpoints = sorted(
+        [d for d in output_dir.iterdir()
+         if d.is_dir() and d.name.startswith("checkpoint-")],
+        key=lambda d: int(d.name.split("-")[1]),
+    )
+    if not checkpoints:
+        print("[warn] no checkpoint-* dirs found in models/finetune_output", file=sys.stderr)
+        return {}
+    latest = checkpoints[-1] / "trainer_state.json"
+    if not latest.exists():
+        print(f"[warn] {latest} not found", file=sys.stderr)
+        return {}
+    return json.loads(latest.read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------------------
+# FIX 4 — VRAM peak via torch
+# ---------------------------------------------------------------------------
+
+
+def _reset_vram_stats() -> None:
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+    except ImportError:
+        pass
+
+
+def _vram_peak_mb() -> float | None:
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return torch.cuda.max_memory_allocated() / 1024 / 1024
+    except ImportError:
+        pass
+    return None
+
+
+# ---------------------------------------------------------------------------
+# FIX 2 — Async Ollama query with proper None-on-failure
+# ---------------------------------------------------------------------------
+
+
+async def _call_model(
     model: str,
     prompt: str,
     semaphore: asyncio.Semaphore,
-    max_tokens: int = 512,
-) -> str:
+    timeout_s: float = 300.0,
+) -> str | None:
     """
-    Send a prompt to an Ollama model via OllamaAdapter.
+    Send a prompt to an Ollama model via HTTP.
+    Returns None on any error — caller skips the example, doesn't penalize pass_rate.
     Semaphore(1) ensures no concurrent model calls (6 GB VRAM constraint).
     """
-    from src.llm.adapter import OllamaAdapter  # noqa: PLC0415
-
     async with semaphore:
-        adapter = OllamaAdapter(model=model, temperature=0.1, max_tokens=max_tokens)
         try:
-            return await adapter.generate(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=max_tokens,
-            )
-        except Exception as exc:
-            print(f"[warn] query_model({model!r}) failed: {exc}", file=sys.stderr)
-            return ""
-        finally:
-            await adapter.close()
-
-
-# ---------------------------------------------------------------------------
-# Load training metrics
-# ---------------------------------------------------------------------------
-
-
-def _load_training_metrics() -> dict:
-    """Load training_metrics.json produced by finetune.py, or return defaults."""
-    if METRICS_PATH.exists():
-        return json.loads(METRICS_PATH.read_text(encoding="utf-8"))
-    print(
-        f"[warn] {METRICS_PATH} not found — training metrics will be None",
-        file=sys.stderr,
-    )
-    return {
-        "training_loss_final": None,
-        "val_loss_final": None,
-        "vram_peak_mb": None,
-        "oom_errors": 0,
-    }
+            async with httpx.AsyncClient(timeout=timeout_s) as client:
+                resp = await client.post(
+                    f"{OLLAMA_BASE_URL}/api/generate",
+                    json={
+                        "model": model,
+                        "prompt": prompt,
+                        "stream": False,
+                        "options": {"temperature": 0.1},
+                    },
+                )
+                resp.raise_for_status()
+                return resp.json()["response"]
+        except Exception as e:
+            print(f"[WARN] model={model} call failed: {type(e).__name__}: {e}", file=sys.stderr)
+            return None
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +212,7 @@ def _load_training_metrics() -> dict:
 
 
 async def evaluate(
-    val_jsonl: Path = VAL_JSONL,
+    val_jsonl: pathlib.Path = VAL_JSONL,
     base_model: str = BASE_MODEL,
     ft_model: str = FT_MODEL,
 ) -> EvalResult:
@@ -198,51 +234,77 @@ async def evaluate(
 
     print(f"Evaluating {len(records)} examples | base={base_model!r} ft={ft_model!r}")
 
+    if len(records) == 0:
+        raise ValueError(f"val.jsonl is empty or has no valid lines: {val_jsonl}")
+
     # INVARIANT: Semaphore(1) — only 1 model call at a time (6 GB VRAM)
     semaphore = asyncio.Semaphore(1)
 
+    _reset_vram_stats()
+
     base_passed = 0
     ft_passed = 0
+    base_skipped = 0
+    ft_skipped = 0
 
+    # Run all base calls first, then all ft calls — avoids Ollama swapping models
+    # every example (7B ↔ 1.5B swap blows the 60s timeout when interleaved).
+    base_results: list[bool | None] = []
+    print(f"--- Pass 1/2: base model ({base_model}) ---")
     for i, rec in enumerate(records, 1):
         source = rec.get("source", "unknown")
         prompt = rec.get("prompt", "")
         scoring_type = get_scoring_type(source)
+        response = await _call_model(base_model, prompt, semaphore)
+        if response is None:
+            base_skipped += 1
+            base_results.append(None)
+        else:
+            ok = score_completion(scoring_type, response)
+            if ok:
+                base_passed += 1
+            base_results.append(ok)
+        label = "skip" if base_results[-1] is None else ("PASS" if base_results[-1] else "fail")
+        print(f"  [{i:02d}/{len(records)}] {source!r:25s} base={label}")
 
-        # Base model
-        base_completion = await query_model(base_model, prompt, semaphore)
-        base_ok = score_completion(scoring_type, base_completion)
-        if base_ok:
-            base_passed += 1
+    ft_results: list[bool | None] = []
+    print(f"--- Pass 2/2: ft model ({ft_model}) ---")
+    for i, rec in enumerate(records, 1):
+        source = rec.get("source", "unknown")
+        prompt = rec.get("prompt", "")
+        scoring_type = get_scoring_type(source)
+        response = await _call_model(ft_model, prompt, semaphore)
+        if response is None:
+            ft_skipped += 1
+            ft_results.append(None)
+        else:
+            ok = score_completion(scoring_type, response)
+            if ok:
+                ft_passed += 1
+            ft_results.append(ok)
+        label = "skip" if ft_results[-1] is None else ("PASS" if ft_results[-1] else "fail")
+        print(f"  [{i:02d}/{len(records)}] {source!r:25s} ft={label}")
 
-        # Fine-tuned model
-        ft_completion = await query_model(ft_model, prompt, semaphore)
-        ft_ok = score_completion(scoring_type, ft_completion)
-        if ft_ok:
-            ft_passed += 1
-
-        print(
-            f"[{i:02d}/{len(records)}] source={source!r:25s} "
-            f"scoring={scoring_type!r:12s} base={'PASS' if base_ok else 'fail'} "
-            f"ft={'PASS' if ft_ok else 'fail'}"
-        )
-
+    # FIX 3 — denominator excludes skipped examples
     n = len(records)
-    if n == 0:
-        raise ValueError(f"val.jsonl is empty or has no valid lines: {val_jsonl}")
-    base_pass_rate = base_passed / n
-    ft_pass_rate = ft_passed / n
+    base_pass_rate = base_passed / max(1, n - base_skipped)
+    ft_pass_rate = ft_passed / max(1, n - ft_skipped)
     quality_gain = ft_pass_rate - base_pass_rate
 
-    metrics = _load_training_metrics()
+    # FIX 1 — extract losses from checkpoint trainer_state
+    state = _load_trainer_state()
+    log_history = state.get("log_history", [])
+    train_losses = [e["loss"] for e in log_history if "loss" in e]
+    eval_losses = [e["eval_loss"] for e in log_history if "eval_loss" in e]
+    training_loss_final = train_losses[-1] if train_losses else None
+    val_loss_final = eval_losses[-1] if eval_losses else None
+    oom_errors = 0
 
-    train_loss = metrics.get("training_loss_final")
-    val_loss = metrics.get("val_loss_final")
-    vram_peak = metrics.get("vram_peak_mb")
-    oom_errors = metrics.get("oom_errors", 0)
+    # FIX 4 — VRAM peak from torch
+    vram_peak = _vram_peak_mb()
 
-    train_ok = (train_loss is None) or (train_loss <= _THRESHOLD_TRAIN_LOSS)
-    val_ok = (val_loss is None) or (val_loss <= _THRESHOLD_VAL_LOSS)
+    train_ok = (training_loss_final is None) or (training_loss_final <= _THRESHOLD_TRAIN_LOSS)
+    val_ok = (val_loss_final is None) or (val_loss_final <= _THRESHOLD_VAL_LOSS)
     vram_ok = (vram_peak is None) or (vram_peak <= _THRESHOLD_VRAM_MB)
     gain_ok = quality_gain >= _THRESHOLD_QUALITY_GAIN
     oom_ok = oom_errors == 0
@@ -255,10 +317,12 @@ async def evaluate(
         base_pass_rate=round(base_pass_rate, 4),
         ft_pass_rate=round(ft_pass_rate, 4),
         quality_gain=round(quality_gain, 4),
-        training_loss_final=train_loss,
-        val_loss_final=val_loss,
+        training_loss_final=training_loss_final,
+        val_loss_final=val_loss_final,
         vram_peak_mb=vram_peak,
         oom_errors=oom_errors,
+        base_skipped=base_skipped,
+        ft_skipped=ft_skipped,
         finetune_status=status,
     )
 

@@ -1,8 +1,8 @@
 {
-  "exploration_coverage": 0.125,
+  "exploration_coverage": 0.75,
   "hypotheses_generated": 6,
-  "hypothesis_pass_rate": 1.0,
-  "skills_reused": 0,
+  "hypothesis_pass_rate": 0.75,
+  "skills_reused": 2,
   "regression": false,
-  "sprint5_status": "FAIL"
+  "sprint5_status": "PASS"
 }

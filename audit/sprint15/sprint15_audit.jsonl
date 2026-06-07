@@ -1,0 +1,2 @@
+{"seq":0,"ts":1780529193.3768992,"event":"parallel_run","payload_hash":"cb0880a66ce69219d1be60f059d02a26091a4e218ebe511d70102fedfdf91e9e","prev_hash":"GENESIS","chain_hash":"28331cccb8b7a0583993ab644b181d2a8cac702f87544e0b1329d9b4da503ff3"}
+{"seq":1,"ts":1780529193.377208,"event":"parallel_quality","payload_hash":"380ef967e8ea191e65f27a11d790ba1c77f832420ce32d340ad7a63384f5f29f","prev_hash":"986a03383b434aac04e422e01c06d6781947140982bb91faa173eebbcdda2c92","chain_hash":"5847c7504ce54021d8a496dd9fbb8a88d138a2920903ea30ce82348950a81f04"}

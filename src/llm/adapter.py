@@ -19,11 +19,12 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 DEFAULT_MODEL = os.getenv("LLM_MODEL", "qwen2.5-coder:7b-instruct-q4_K_M")
 DEFAULT_EMBED_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 TEMPERATURE = 0.1
-SEMAPHORE_LIMIT = 2
+SEMAPHORE_LIMIT = 1
 VRAM_BUFFER_MB = 100
 
-# Module-level semaphore — shared across all OllamaAdapter instances to cap
-# concurrent VRAM usage at 2 simultaneous inference calls (6GB VRAM constraint).
+# INVARIANT: must remain Semaphore(1) — 6GB VRAM GTX 1660 Ti
+# concurrent Ollama calls cause VRAM contention and OOM
+# do NOT increase without hardware upgrade
 _inference_semaphore = asyncio.Semaphore(SEMAPHORE_LIMIT)
 
 

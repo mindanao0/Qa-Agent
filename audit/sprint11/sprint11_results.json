@@ -1,0 +1,17 @@
+{
+  "continuous_loop_cycles": 3,
+  "new_states_per_cycle": 2,
+  "cumulative_tests_generated": 16,
+  "self_heal_rate": 0.0,
+  "memory_mb_stable": true,
+  "stop_reason": "max_cycles",
+  "regression": false,
+  "sprint11_status": "PASS",
+  "self_heal_needed": 0,
+  "self_heal_note": "vacuous: 0 tests required repair (conditional gate not triggered)",
+  "pass_rate": 1.0,
+  "memory_growth_mb": 41.44,
+  "skills_reused": 2,
+  "otel_spans_emitted": 12,
+  "audit_trail_entries": 3
+}
