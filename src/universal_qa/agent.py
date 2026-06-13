@@ -8,6 +8,7 @@ from loguru import logger
 from playwright.async_api import async_playwright
 
 from src.universal_qa.auth_manager import AuthManager
+from src.universal_qa.explorer.nav_map import ExploredPage, NavigationMap
 from src.universal_qa.models import TestResult
 from src.universal_qa.reporters.html import HTMLReporter
 from src.universal_qa.reporters.terminal import TerminalReporter
@@ -93,6 +94,31 @@ class UniversalQAAgent:
                 logger.info(
                     f"  Explored {len(nav_map.pages)} pages, {len(nav_map.flows)} flows"
                 )
+
+                # Supplement nav_map with Phase 2 pages not reached by Phase 3
+                _explored_urls = {p.url.split("?")[0].split("#")[0] for p in nav_map.pages}
+                _extra_pages = []
+                for _node in sfg_store.get_nodes_by_url_prefix(
+                    f"{urlparse(discover_url).scheme}://{urlparse(discover_url).netloc}"
+                ):
+                    _nurl = _node.url.split("?")[0].split("#")[0]
+                    if _nurl not in _explored_urls:
+                        _extra_pages.append(ExploredPage(
+                            url=_node.url,
+                            title=_node.page_title,
+                            pam_content=_node.pam_content,
+                            actions=[],
+                        ))
+                if _extra_pages:
+                    nav_map = NavigationMap(
+                        base_url=nav_map.base_url,
+                        pages=nav_map.pages + _extra_pages,
+                        flows=nav_map.flows,
+                        explored_at_iso=nav_map.explored_at_iso,
+                    )
+                    logger.info(
+                        f"  +{len(_extra_pages)} Phase 2 pages → total {len(nav_map.pages)}"
+                    )
 
                 # Phase 4: Plan from NavigationMap
                 logger.info("Phase 4: generating test cases")

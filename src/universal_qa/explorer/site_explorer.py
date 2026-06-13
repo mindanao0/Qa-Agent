@@ -135,7 +135,11 @@ class SiteExplorer:
         actions: list[ExploredAction] = []
         new_urls: list[str] = []
 
+        _page_start = time.monotonic()
         for cand in candidates:
+            if time.monotonic() - _page_start > 45.0:
+                logger.info(f"  Per-page time cap reached — stopping element scan for {url}")
+                break
             key = _element_key(url, cand.role, cand.name or cand.label)
             if key in visited_actions:
                 continue
@@ -175,7 +179,7 @@ class SiteExplorer:
         pre_badge = await self._snapshot_state(page)
         try:
             loc = self._locate(page, cand)
-            await loc.click(timeout=3_000)
+            await loc.click(timeout=1_500)
             await page.wait_for_load_state("networkidle", timeout=1_000)
         except Exception as exc:
             logger.debug(f"  click '{cand.label}' skipped: {exc!r}")
