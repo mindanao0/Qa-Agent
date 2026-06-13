@@ -1,5 +1,18 @@
 # QA Agent — Project Specs Index
 
+## Subagent Policy (auto-decide)
+Use the `superpowers:dispatching-parallel-agents` skill automatically — do NOT wait for the user to ask — whenever ALL of these hold:
+- There are **2+ subtasks that touch different files** or different subsystems
+- The subtasks have **no sequential dependency** (task B does not need task A's output)
+- Each subtask is non-trivial (would take more than ~5 lines to describe)
+
+Skip subagents when:
+- Tasks are sequential (output of A feeds B)
+- Only one file or one function changes
+- The task is a quick lookup, explanation, or single-line fix
+
+Decision heuristic — ask yourself: "Could I hand each subtask to a different developer and have them work independently?" If yes → dispatch parallel subagents.
+
 ## Status
 - SPEC_CORE: ✅ Implemented
 - SPEC_UNIVERSAL_DOMAIN: ✅ Implemented
