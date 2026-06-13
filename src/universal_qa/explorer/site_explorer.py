@@ -72,6 +72,7 @@ class SiteExplorer:
             flows: list[NavigationFlow] = []
             visited_actions: set[str] = set()
             visit_count: dict[str, int] = {}
+            queued_urls: set[str] = set(discovered_urls)
             queue: deque[tuple[str, int]] = deque((u, 0) for u in discovered_urls)
 
             while queue and len(pages) < self._cfg.max_pages:
@@ -101,7 +102,8 @@ class SiteExplorer:
                 )
                 for nu in new_urls:
                     ncu = _clean_url(nu)
-                    if urlparse(ncu).netloc == base_domain and visit_count.get(ncu, 0) == 0:
+                    if urlparse(ncu).netloc == base_domain and nu not in queued_urls:
+                        queued_urls.add(nu)
                         queue.append((nu, depth + 1))
 
             return NavigationMap(
@@ -231,16 +233,28 @@ class SiteExplorer:
     def _detect_flows(self, actions: list[ExploredAction]) -> list[NavigationFlow]:
         nav_actions = [a for a in actions if a.leads_to_url]
         flows: list[NavigationFlow] = []
+        seen_dests: set[str] = set()
+        for i, action in enumerate(nav_actions):
+            dest = action.leads_to_url or ""
+            if dest and dest not in seen_dests:
+                seen_dests.add(dest)
+                flows.append(self._build_flow([action], idx=i))
         if len(nav_actions) >= 2:
-            flows.append(self._build_flow(nav_actions, idx=0))
+            first_dest = nav_actions[0].leads_to_url or ""
+            last_dest = nav_actions[-1].leads_to_url or ""
+            if first_dest != last_dest:
+                flows.append(self._build_flow(nav_actions, idx=len(nav_actions)))
         return flows
 
     def _build_flow(self, steps: list[ExploredAction], idx: int) -> NavigationFlow:
         start = steps[0].page_url
         end = steps[-1].leads_to_url or steps[-1].page_url
-        name = "flow_" + hashlib.sha256(f"{start}{end}{idx}".encode()).hexdigest()[:8]
+        flow_id = "flow_" + hashlib.sha256(f"{start}{end}{idx}".encode()).hexdigest()[:8]
+        start_path = urlparse(start).path or "/"
+        end_path = urlparse(end).path or "/"
+        name = f"{start_path} → {end_path}"
         return NavigationFlow(
-            flow_id=name, name=name, steps=steps,
+            flow_id=flow_id, name=name, steps=steps,
             start_url=start, end_url=end,
         )
 

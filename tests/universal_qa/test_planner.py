@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from src.universal_qa.models import TestCase
-from src.universal_qa.test_planner import UniversalTestPlanner
+from src.universal_qa.test_planner import UniversalTestPlanner, _FuncResponse, _FuncItem
 
 
 def _make_node(url: str, title: str, pam: str, tags: list[str]):
@@ -100,3 +100,73 @@ def test_plan_flows_builds_test_case():
     assert cases[0].priority == "high"
     assert len(cases[0].steps) == 2
     assert "https://x.com/cart" in cases[0].expected_outcome
+
+
+# ── Fix 1: plan_from_map ต้อง generate functional tests ด้วย LLM ──────────────
+
+@pytest.mark.asyncio
+async def test_plan_from_map_includes_llm_functional_tests():
+    """plan_from_map ต้องมี functional TestCase ที่มาจาก LLM สำหรับแต่ละ page."""
+    planner = UniversalTestPlanner.__new__(UniversalTestPlanner)
+    mock_item = MagicMock()
+    mock_item.title = "ทดสอบเพิ่มสินค้าลงตะกร้า"
+    mock_item.priority = "high"
+    mock_item.preconditions = ["เข้าสู่ระบบแล้ว"]
+    mock_item.steps = ["เปิดหน้า https://x.com/inv", "คลิกปุ่ม \"Add to cart\""]
+    mock_item.expected_outcome = "สินค้าถูกเพิ่มลงตะกร้า"
+
+    mock_response = MagicMock(spec=_FuncResponse)
+    mock_response.test_cases = [mock_item]
+
+    client = AsyncMock()
+    client.create_structured = AsyncMock(return_value=mock_response)
+    planner._client = client
+
+    page = ExploredPage(
+        url="https://x.com/inv", title="Inventory", pam_content="products listed",
+        actions=[ExploredAction(page_url="https://x.com/inv", action_label="Add to cart",
+                                element_role="button", element_name="Add to cart")],
+    )
+    nav_map = NavigationMap(base_url="https://x.com", pages=[page], flows=[], explored_at_iso="")
+
+    cases = await planner.plan_from_map(nav_map)
+
+    functional = [c for c in cases if c.type == "functional"]
+    assert len(functional) >= 1, "plan_from_map ต้องมี functional test case อย่างน้อย 1 ตัว"
+    assert any(c.source_url == "https://x.com/inv" for c in functional)
+
+
+@pytest.mark.asyncio
+async def test_plan_from_pages_functional_calls_llm_per_page():
+    """_plan_from_pages_functional ต้องเรียก LLM 1 ครั้งต่อ page."""
+    planner = UniversalTestPlanner.__new__(UniversalTestPlanner)
+    mock_response = MagicMock(spec=_FuncResponse)
+    mock_response.test_cases = []
+
+    client = AsyncMock()
+    client.create_structured = AsyncMock(return_value=mock_response)
+    planner._client = client
+
+    pages = [
+        ExploredPage(url="https://x.com/a", title="A", pam_content="", actions=[]),
+        ExploredPage(url="https://x.com/b", title="B", pam_content="", actions=[]),
+    ]
+    await planner._plan_from_pages_functional(pages)
+
+    assert client.create_structured.call_count == 2, "ต้องเรียก LLM 1 ครั้งต่อ page"
+
+
+@pytest.mark.asyncio
+async def test_plan_from_pages_functional_fallback_on_llm_error():
+    """เมื่อ LLM ล้มเหลว ต้อง fallback เป็น load-page test แทนที่จะ raise."""
+    planner = UniversalTestPlanner.__new__(UniversalTestPlanner)
+    client = AsyncMock()
+    client.create_structured = AsyncMock(side_effect=RuntimeError("LLM timeout"))
+    planner._client = client
+
+    pages = [ExploredPage(url="https://x.com/a", title="MyPage", pam_content="", actions=[])]
+    cases = await planner._plan_from_pages_functional(pages)
+
+    assert len(cases) == 1
+    assert cases[0].type == "functional"
+    assert cases[0].source_url == "https://x.com/a"
