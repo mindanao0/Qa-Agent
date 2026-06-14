@@ -27,3 +27,16 @@ models/finetune_output/checkpoint-*/
 models/finetune_output/emergency/
 models/finetune_output/final/
 models/qwen2.5-coder-finetuned/*.gguf
+models/qwen2.5-coder-finetuned/
+models/qwen2.5-coder-finetuned_gguf/
+models/eval_results.json
+unsloth_compiled_cache/
+
+# QA reports — HTML too large, keep only multi_site summaries
+reports/qa_report_*.html
+reports/screenshots/
+reports/multi_site/_run_log*.txt
+
+# Misc
+package-lock.json
+audit/wddm_backup.reg

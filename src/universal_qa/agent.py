@@ -125,6 +125,19 @@ class UniversalQAAgent:
                 test_cases = await self._planner.plan_from_map(nav_map)
                 logger.info(f"  {len(test_cases)} test cases generated")
 
+                # Phase 4 (E2E): เพิ่ม E2E flows ถ้ามี credentials
+                if self._auth._username and self._auth._password:
+                    from src.universal_qa.e2e_planner import E2EFlowPlanner
+                    _e2e_planner = E2EFlowPlanner(self._planner._client)
+                    _e2e_cases = await _e2e_planner.plan(
+                        nav_map,
+                        username=self._auth._username,
+                        password=self._auth._password,
+                    )
+                    if _e2e_cases:
+                        test_cases = test_cases + _e2e_cases
+                        logger.info(f"  +{len(_e2e_cases)} E2E flows → total {len(test_cases)}")
+
                 # Phase 4: Execute + Report
                 logger.info("Phase 4: executing test cases")
                 screenshot_dir = self._output_dir / "screenshots"
