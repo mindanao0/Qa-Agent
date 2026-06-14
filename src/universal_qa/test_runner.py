@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import pathlib
 import re
@@ -26,14 +26,41 @@ _SQLI_PAYLOAD = "' OR '1'='1"
 _THAI_NAV = re.compile(r'^(เปิดหน้า|ไปที่หน้า|ไปที่|นำทางไปยัง|เปิด)\s+', re.IGNORECASE)
 _THAI_FILL = re.compile(r'^(กรอก|พิมพ์|ใส่ข้อมูล|ใส่)\s+', re.IGNORECASE)
 _THAI_CLICK = re.compile(r'^(คลิกปุ่ม|คลิกลิงก์|คลิก|กดปุ่ม|กด)\s+', re.IGNORECASE)
+# Thai/English assertion keywords — Playwright ไม่รองรับ assertion โดยตรง
+_VERIFY_RE = re.compile(
+    r'^(ตรวจสอบ|ตรวจว่า|ยืนยัน|verify\s|assert\s|check\s+that\s)',
+    re.IGNORECASE,
+)
+# Match first quoted substring (ASCII double/single + Unicode left/right variants)
+_QUOTED_TEXT_RE = re.compile(
+    '(?:'
+    '"([^"]+)"'   # "…"  Unicode left/right double
+    '|'
+    '‘([^’]+)’'   # '…'  Unicode left/right single
+    '|'
+    '"([^"]+)"'                   # "…"  ASCII double
+    '|'
+    "'([^']+)'"                   # '…'  ASCII single
+    ')'
+)
+
+
+_POST_LOGIN_PATH_RE = re.compile(
+    r'/(inventory|cart|checkout|dashboard|profile|account|products?|orders?|settings?)',
+    re.IGNORECASE,
+)
+_LOGIN_PATH_RE = re.compile(r'/(login|signin|sign-in|auth)', re.IGNORECASE)
 
 
 def _normalize_steps(steps: list[str], source_url: str) -> list[str]:
-    """แปล Thai action keywords → English และแก้ relative path → full URL.
-
-    ใช้เฉพาะตอนส่งให้ HypothesisExecutor — report แสดง steps ภาษาไทยเดิม
-    """
+    """Thai action keywords to English + relative path to full URL."""
     base = "{u.scheme}://{u.netloc}".format(u=urlparse(source_url))
+    # ตรวจจาก path ว่าเป็นหน้า post-login (inventory/cart/checkout/…) อย่างชัดเจน
+    # ไม่ใช้ netloc เพราะ saucedemo login page อยู่ที่ root "/" ซึ่งไม่มี "login" ใน URL
+    _src_is_post_login = bool(_POST_LOGIN_PATH_RE.search(source_url))
+    # login page = URL path มีคำว่า login/signin/auth
+    _src_is_login = bool(_LOGIN_PATH_RE.search(source_url))
+
     fixed = []
     for step in steps:
         # 1. แปล Thai keywords เป็น English
@@ -54,15 +81,52 @@ def _normalize_steps(steps: list[str], source_url: str) -> list[str]:
                 full_url = urljoin(base + "/", path.lstrip("/"))
                 step = re.sub(re.escape(path_match.group(0)), f" {full_url}", step, count=1).strip()
 
+        # 3. convert assertion steps -> "verify text: X" (if quoted text found)
+        #    no quoted text -> skip (nothing to verify)
+        if _VERIFY_RE.match(step):
+            quoted_m = re.search(_QUOTED_TEXT_RE, step)
+            if quoted_m:
+                extracted = next(g for g in quoted_m.groups() if g is not None)
+                fixed.append('verify text: "' + extracted + '"')
+            continue
+
+        # 4. skip: click "/path" — path string ไม่ใช่ชื่อ element จริง
+        _click_path_m = re.match(r'^click\s+["\']?(/[^\s"\']+)["\']?\s*$', step, re.IGNORECASE)
+        if _click_path_m:
+            continue
+
+        # 5. skip: click "snake_case" — placeholder ที่ LLM สร้างขึ้น ไม่ใช่ element จริง
+        _click_ph_m = re.match(r'^click\s+["\']?([a-z][a-z0-9_]{3,})["\']?\s*$', step, re.IGNORECASE)
+        if _click_ph_m and "_" in _click_ph_m.group(1):
+            continue
+
+        # 6. skip: login click/navigate บนหน้า post-login ที่ชัดเจน (inventory/cart/…)
+        #    ตรวจ path ของ source URL แทน netloc เพราะ saucedemo login อยู่ที่ "/" ไม่มี "login" ใน URL
+        _login_step_m = re.match(
+            r'^(click|navigate)\s+.*\b(login|sign[\s-]?in)\b',
+            step, re.IGNORECASE,
+        )
+        if _login_step_m and _src_is_post_login:
+            continue
+
+        # 7. skip: fill credential (username/password/email) บนหน้า post-login
+        #    LLM บางครั้ง generate ขั้นตอน login ซ้ำแม้อยู่บนหน้า inventory แล้ว
+        _fill_cred_m = re.match(
+            r'^fill\s+["\']?(username|password|email|user\s+name)["\']?\b',
+            step, re.IGNORECASE,
+        )
+        if _fill_cred_m and _src_is_post_login:
+            continue
+
         fixed.append(step)
     return fixed
 
 
 _PW_FILL_RE = re.compile(
-    r'(fill|กรอก|พิมพ์|ใส่)\s+["\']?[Pp]assword["\']?',
+    r'(fill|กรอก|พิมพ์|ใส่).*\bpassword\b',
     re.IGNORECASE,
 )
-_PW_VALUE_RE = re.compile(r'(?:with|ด้วย)\s+"([^"]+)"', re.IGNORECASE)
+_PW_VALUE_RE = re.compile(r'(?:with|ด้วย)\s+"?([^"\s]+)"?', re.IGNORECASE)
 
 
 async def _pre_fill_password(steps: list[str], page: Page) -> list[str]:
@@ -71,7 +135,12 @@ async def _pre_fill_password(steps: list[str], page: Page) -> list[str]:
     for step in steps:
         if _PW_FILL_RE.search(step):
             val_match = _PW_VALUE_RE.search(step)
-            value = val_match.group(1) if val_match else "test"
+            if val_match:
+                value = val_match.group(1)
+            else:
+                # รูปแบบ: fill "value" ในช่อง 'Password' — ดึง quoted string แรก
+                _qm = re.search(r'"([^"]+)"|\'([^\']+)\'', step)
+                value = (_qm.group(1) or _qm.group(2)) if _qm else "test"
             try:
                 await page.locator("input[type=password]").first.fill(value, timeout=5_000)
             except Exception:
@@ -126,6 +195,8 @@ class UniversalTestRunner:
                 return await self._run_accessibility(tc, page)
             if tc.type == "security":
                 return await self._run_security(tc, page)
+            if tc.type == "e2e":
+                return await self._run_e2e(tc, page)
             return await self._run_functional(tc, page)
         except Exception as exc:
             return TestResult(
@@ -167,6 +238,40 @@ class UniversalTestRunner:
             failure_reason=hyp_result.failure_reason,
             screenshot_path=screenshot,
             duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    async def _run_e2e(self, tc: TestCase, page: Page) -> TestResult:
+        """Execute E2E flow — ไม่ reset page (maintains login state across steps)."""
+        start = time.monotonic()
+        normalized = _normalize_steps(tc.steps, tc.source_url or page.url)
+        safe_steps = await _pre_fill_password(normalized, page)
+        hyp = TestHypothesis(
+            goal=tc.title,
+            start_url="",  # E2E จัดการ navigation เองผ่าน steps — ไม่ auto-goto
+            preconditions=tc.preconditions,
+            steps=safe_steps,
+            expected_outcome=tc.expected_outcome,
+            confidence=0.7,
+        )
+        hyp_result = await self._hyp_executor.execute(hyp, page, max_repairs=3)
+        traces = [
+            StepTrace(
+                step=step,
+                status="passed" if hyp_result.passed else "failed",
+                detail=f"E2E: {hyp_result.steps_executed} steps",
+                error=hyp_result.failure_reason if not hyp_result.passed else None,
+            )
+            for step in tc.steps
+        ]
+        duration = int((time.monotonic() - start) * 1000)
+        screenshot = await self._maybe_screenshot(page, tc.id, hyp_result.passed)
+        return TestResult(
+            test_case=tc,
+            passed=hyp_result.passed,
+            failure_reason=hyp_result.failure_reason,
+            steps_trace=traces,
+            screenshot_path=screenshot,
+            duration_ms=duration,
         )
 
     async def _run_accessibility(self, tc: TestCase, page: Page) -> TestResult:

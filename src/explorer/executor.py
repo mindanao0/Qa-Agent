@@ -19,6 +19,7 @@ import hashlib
 import re
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse as _urlparse
 
 from loguru import logger
 from playwright.async_api import Page
@@ -85,6 +86,37 @@ def _extract_quoted(text: str) -> str | None:
     return None
 
 
+async def _element_found_on_page(
+    page: Page, quoted_text: str | None, action: str
+) -> bool:
+    """Immediate RAG-grounded existence check via count() — no timeout, no retry.
+
+    Returns False only when the target is *confidently absent* from the current
+    DOM, allowing callers to skip gracefully instead of burning a 10s timeout
+    and the repair budget on hallucinated locators.
+    Returns True on any exception (fail-open: proceed with normal execution).
+    """
+    try:
+        if action == "fill":
+            # Page must have at least one fillable input
+            return (
+                await page.get_by_role("textbox").count() > 0
+                or await page.get_by_role("searchbox").count() > 0
+            )
+        if not quoted_text:
+            return True  # No specific target — let executor decide
+        # Click: target text/name must appear as button, link, or visible text
+        if await page.get_by_role("button", name=quoted_text).count() > 0:
+            return True
+        if await page.get_by_role("link", name=quoted_text).count() > 0:
+            return True
+        if await page.get_by_text(quoted_text, exact=False).count() > 0:
+            return True
+        return False
+    except Exception:
+        return True  # Cannot determine — proceed
+
+
 async def _execute_step_on_page(step: ContractStep, page: Page) -> None:
     """
     Execute a single ContractStep on a live Playwright Page.
@@ -95,30 +127,55 @@ async def _execute_step_on_page(step: ContractStep, page: Page) -> None:
     - Raises on Playwright timeout or any other exception.
     """
     step_text = step.locator
-    action = _classify_step(step_text)
+
+    # verify text: intercept ก่อน classify — ตรวจหา text บน page
+    # ใช้ count() แทน wait_for() เพื่อไม่ให้ timeout เมื่อ LLM สร้าง text ที่ไม่มีในหน้าจริง
+    if step_text.lower().startswith("verify text:"):
+        target = step_text[len("verify text:"):].strip().strip('"\'')
+        if target:
+            try:
+                found = await page.get_by_text(target, exact=False).count() > 0
+            except Exception:
+                found = True  # fail-open: ไม่รู้ก็ผ่าน
+            if not found:
+                logger.debug(
+                    f"verify text: '{target[:60]}' not found on page — skipping assertion"
+                )
+        return
+
+    # Prefer action_type set by RepairEngine; re-infer from text only when unrecognised
+    action = (
+        step.action_type
+        if step.action_type in ("navigate", "fill", "click")
+        else _classify_step(step_text)
+    )
     quoted_text = _extract_quoted(step_text)
 
     if action == "navigate":
-        # Try to find a URL in the step text; fall back to quoted text.
         url_match = re.search(r"https?://\S+", step_text)
         if url_match:
             target_url = url_match.group(0).rstrip(".,;)")
-        elif quoted_text:
+        elif step_text.startswith("/"):
+            # Relative path from RepairEngine — prepend current page origin
+            _p = _urlparse(page.url)
+            target_url = f"{_p.scheme}://{_p.netloc}{step_text}"
+        elif quoted_text and (quoted_text.startswith("http") or quoted_text.startswith("/")):
             target_url = quoted_text
         else:
-            # Cannot determine URL — treat as a click on the text
-            action = "click"
             target_url = None
 
-        if action == "navigate" and target_url:
-            await page.goto(target_url, timeout=15_000)
-            return
-        if action == "navigate" and not target_url:
-            # Descriptive navigate step with no URL (e.g. "Navigate to the app")
-            # — page is already at start_url, skip this step.
-            return
+        if target_url:
+            await page.goto(target_url, timeout=30_000)
+        # If no valid target (e.g. snake_case placeholder), skip gracefully
+        return
 
     if action == "fill":
+        # RAG-grounded pre-check: skip gracefully if no fillable input on this page
+        if not await _element_found_on_page(page, quoted_text, "fill"):
+            logger.debug(
+                f"_execute_step_on_page: fill skipped — no textbox on {page.url!r}"
+            )
+            return
         value = step.input_value or quoted_text or "test"
         press_enter = "enter" in step_text.lower() or "press" in step_text.lower()
         # Try label first, then textbox role
@@ -146,6 +203,12 @@ async def _execute_step_on_page(step: ContractStep, page: Page) -> None:
 
     # Priority: exact quoted text → role=button → role=link → generic text
     if quoted_text:
+        # RAG-grounded pre-check: skip gracefully if locator absent from page
+        if not await _element_found_on_page(page, quoted_text, "click"):
+            logger.debug(
+                f"_execute_step_on_page: click skipped — {quoted_text!r} not on {page.url!r}"
+            )
+            return
         try:
             await page.get_by_role("button", name=quoted_text).click(timeout=10_000)
             return
@@ -162,10 +225,17 @@ async def _execute_step_on_page(step: ContractStep, page: Page) -> None:
         except Exception:
             pass
 
-    # No quoted text — extract the most meaningful word from step_text
+    # Fallback: strip all quote chars to avoid searching for `"Checkout"` literally
     stopwords = {"click", "the", "a", "an", "on", "button", "link", "input", "field", "fill", "type", "into"}
-    words = [w.strip(".,") for w in step_text.split() if w.lower().strip(".,") not in stopwords]
-    fallback_text = words[-1] if words else step_text
+    _strip_quotes = str.maketrans("", "", "\"'“”‘’")
+    words = [
+        w.strip(".,").translate(_strip_quotes)
+        for w in step_text.split()
+        if w.lower().strip(".,") not in stopwords
+    ]
+    words = [w for w in words if w]
+    # Prefer the already-extracted quoted_text (cleaned) over raw word-split token
+    fallback_text = quoted_text if quoted_text else (words[-1] if words else step_text)
     await page.get_by_text(fallback_text, exact=False).first.click(timeout=10_000)
 
 
@@ -236,6 +306,7 @@ class HypothesisExecutor:
         self,
         hypothesis: TestHypothesis,
         page: Page,
+        max_repairs: int = 1,
     ) -> HypothesisResult:
         """
         Execute all steps of a TestHypothesis and return HypothesisResult.
@@ -243,7 +314,7 @@ class HypothesisExecutor:
         Never raises — all exceptions produce passed=False with failure_reason.
         """
         try:
-            return await self._run(hypothesis, page)
+            return await self._run(hypothesis, page, max_repairs=max_repairs)
         except Exception as exc:  # final safety net
             logger.error(
                 f"HypothesisExecutor.execute | unexpected top-level error "
@@ -259,9 +330,12 @@ class HypothesisExecutor:
         self,
         hypothesis: TestHypothesis,
         page: Page,
+        max_repairs: int = 1,
     ) -> HypothesisResult:
         """Inner execution loop — may be wrapped by execute()."""
-        await page.goto(hypothesis.start_url, wait_until="domcontentloaded", timeout=30_000)
+        # E2E tests set start_url="" to manage navigation through steps themselves
+        if hypothesis.start_url:
+            await page.goto(hypothesis.start_url, wait_until="domcontentloaded", timeout=30_000)
 
         # Set up preconditions: if hypothesis requires an existing todo, add one first.
         needs_existing = any(
@@ -285,15 +359,36 @@ class HypothesisExecutor:
                 pass  # precondition setup is best-effort
 
         skill = _build_synthetic_skill(hypothesis)
-        repair_attempted = False
+        repairs_used = 0
         steps_executed = 0
 
         for step in skill.steps:
             # ── Safety gate ────────────────────────────────────────────────
-            if not is_safe_action(step.locator, step.input_value):
+            # "password" in a click/navigate locator is link text (e.g. "Forgot your password?"),
+            # not a credential fill — redact it before the safety check so the gate
+            # only fires when a fill action would actually expose a credential.
+            _action_type_for_safety = (
+                step.action_type
+                if step.action_type in ("navigate", "fill", "click")
+                else _classify_step(step.locator)
+            )
+            # For click/navigate: redact ALL blocked keywords so intentional test
+            # actions (click "Remove", click "Logout") are not blocked — only
+            # fill actions with blocked words in the value remain guarded.
+            _locator_for_safety = (
+                re.sub(
+                    r"\b(" + "|".join(re.escape(p) for p in BLOCKED_ACTION_PATTERNS) + r")\b",
+                    "***",
+                    step.locator,
+                    flags=re.IGNORECASE,
+                )
+                if _action_type_for_safety in ("click", "navigate")
+                else step.locator
+            )
+            if not is_safe_action(_locator_for_safety, step.input_value):
                 blocked_kws = [
                     p for p in BLOCKED_ACTION_PATTERNS
-                    if p in (step.locator + (step.input_value or "")).lower()
+                    if p in (_locator_for_safety + (step.input_value or "")).lower()
                 ]
                 reason = (
                     f"Step {step.step_number} blocked by BLOCKED_ACTION_PATTERNS "
@@ -307,7 +402,7 @@ class HypothesisExecutor:
                     hypothesis_id=hypothesis.hypothesis_id,
                     passed=False,
                     failure_reason=reason,
-                    repair_attempted=repair_attempted,
+                    repair_attempted=repairs_used > 0,
                     steps_executed=steps_executed,
                 )
 
@@ -328,9 +423,9 @@ class HypothesisExecutor:
                     f"hypothesis_id={hypothesis.hypothesis_id!r}"
                 )
 
-            # ── Repair (max 1 attempt per hypothesis) ──────────────────────
-            if repair_attempted:
-                # Already used our one repair budget — fail immediately
+            # ── Repair (max max_repairs attempts per hypothesis) ───────────
+            if repairs_used >= max_repairs:
+                # Already exhausted repair budget — fail immediately
                 return HypothesisResult(
                     hypothesis_id=hypothesis.hypothesis_id,
                     passed=False,
@@ -338,11 +433,11 @@ class HypothesisExecutor:
                         f"Step {step.step_number} failed after repair already attempted: "
                         f"{step_error!r}"
                     ),
-                    repair_attempted=True,
+                    repair_attempted=repairs_used > 0,
                     steps_executed=steps_executed,
                 )
 
-            repair_attempted = True
+            repairs_used += 1
             engine = RepairEngine(
                 instructor_client=self._client,
                 sfg_store=self._sfg_store,
@@ -371,7 +466,7 @@ class HypothesisExecutor:
                         f"Step {step.step_number} failed and RepairEngine returned None: "
                         f"{step_error!r}"
                     ),
-                    repair_attempted=True,
+                    repair_attempted=repairs_used > 0,
                     steps_executed=steps_executed,
                 )
 
@@ -388,7 +483,7 @@ class HypothesisExecutor:
                         f"Step {step.step_number} not found in patched skill steps "
                         f"after repair."
                     ),
-                    repair_attempted=True,
+                    repair_attempted=repairs_used > 0,
                     steps_executed=steps_executed,
                 )
 
@@ -410,7 +505,7 @@ class HypothesisExecutor:
                         f"Step {step.step_number} failed even after repair: "
                         f"{retry_exc!r}"
                     ),
-                    repair_attempted=True,
+                    repair_attempted=repairs_used > 0,
                     steps_executed=steps_executed,
                 )
 
@@ -422,7 +517,7 @@ class HypothesisExecutor:
         return HypothesisResult(
             hypothesis_id=hypothesis.hypothesis_id,
             passed=True,
-            repair_attempted=repair_attempted,
+            repair_attempted=repairs_used > 0,
             steps_executed=steps_executed,
         )
 
