@@ -7,6 +7,8 @@ $sites = @(
     @{ label="demoqa"; url="https://demoqa.com"; username=""; password="" },
     # Large e-commerce (Magento) — search, product detail, categories
     @{ label="magento"; url="https://magento.softwaretestingboard.com"; username=""; password="" },
+    # Demo shop — login, product list, cart, checkout (standard_user/secret_sauce)
+    @{ label="saucedemo"; url="https://www.saucedemo.com"; username="standard_user"; password="secret_sauce" },
     # Full e-commerce — register/login, wishlist, checkout, contact
     @{ label="automationexercise"; url="https://automationexercise.com"; username=""; password="" },
     # HR system — dashboard, employee, leave, recruitment (login: Admin/admin123)
