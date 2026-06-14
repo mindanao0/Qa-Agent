@@ -139,3 +139,74 @@ async def test_resolve_step_passthrough_for_clear_locator(tmp_path):
     resolved = await executor._resolve_step(step, page)
     assert resolved is step
     mock_client.create_structured.assert_not_called()
+
+
+# ─── New action types in _execute_step_on_page ───────────────────────────────
+
+from src.explorer.executor import _execute_step_on_page
+from src.contractskill.compiler import ContractStep as _CS
+
+
+def _make_step(locator: str, action: str = "click") -> _CS:
+    return _CS(step_number=1, action_type=action, locator=locator,
+               input_value=None, expected_state_hash="")
+
+
+@pytest.mark.asyncio
+async def test_select_option_tries_select_element():
+    """select option: ต้องเรียก page.select_option ก่อน"""
+    page = AsyncMock()
+    page.select_option = AsyncMock()
+    step = _make_step('select option: "Thailand"')
+    await _execute_step_on_page(step, page)
+    page.select_option.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_select_option_fallback_to_click():
+    """select option: fallback click เมื่อ select_option ล้มเหลว"""
+    page = AsyncMock()
+    page.select_option = AsyncMock(side_effect=Exception("no select"))
+    mock_loc = AsyncMock()
+    page.get_by_text = MagicMock(return_value=MagicMock(first=mock_loc))
+    step = _make_step('select option: "Thailand"')
+    await _execute_step_on_page(step, page)
+    mock_loc.click.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_scroll_to_calls_scroll_into_view():
+    """scroll to: ต้องเรียก scroll_into_view_if_needed"""
+    page = AsyncMock()
+    mock_el = AsyncMock()
+    page.get_by_text = MagicMock(return_value=MagicMock(first=mock_el))
+    step = _make_step('scroll to: "footer"')
+    await _execute_step_on_page(step, page)
+    mock_el.scroll_into_view_if_needed.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_scroll_to_empty_scrolls_to_bottom():
+    """scroll to: (ไม่มี target) ต้อง evaluate scrollTo bottom"""
+    page = AsyncMock()
+    step = _make_step('scroll to:')
+    await _execute_step_on_page(step, page)
+    page.evaluate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_wait_ms_calls_wait_for_timeout():
+    """wait ms: 200 ต้องเรียก page.wait_for_timeout(200)"""
+    page = AsyncMock()
+    step = _make_step('wait ms: 200')
+    await _execute_step_on_page(step, page)
+    page.wait_for_timeout.assert_awaited_once_with(200)
+
+
+@pytest.mark.asyncio
+async def test_wait_ms_capped_at_5000():
+    """wait ms: 99999 ต้อง cap ที่ 5000ms"""
+    page = AsyncMock()
+    step = _make_step('wait ms: 99999')
+    await _execute_step_on_page(step, page)
+    page.wait_for_timeout.assert_awaited_once_with(5_000)

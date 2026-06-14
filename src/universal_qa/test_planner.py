@@ -176,7 +176,117 @@ class UniversalTestPlanner:
         negative = await self._plan_from_pages_negative(nav_map)
         edge = await self._plan_from_pages_edge(nav_map)
         flows = self._plan_flows(nav_map.flows)
-        return self._sort_by_priority(per_page + functional + negative + edge + flows)
+        form_val = self._plan_form_validation(nav_map.pages)
+        broken = self._plan_broken_link(nav_map.pages, nav_map.base_url)
+        error_pg = self._plan_error_page(nav_map.base_url)
+        search = self._plan_search(nav_map.pages)
+        logout = self._plan_logout_flow(nav_map.pages, nav_map.base_url)
+        return self._sort_by_priority(
+            per_page + functional + negative + edge + flows +
+            form_val + broken + error_pg + search + logout
+        )
+
+    def _plan_form_validation(self, pages: list[ExploredPage]) -> list[TestCase]:
+        results = []
+        form_pages = [p for p in pages if "form" in (p.pam_content or "").lower() or "input" in (p.pam_content or "").lower()]
+        for page in form_pages[:5]:
+            results.append(TestCase(
+                title=f"Form validation — required fields: {page.title or page.url}",
+                type="form_validation",
+                priority="high",
+                preconditions=[f"อยู่ที่หน้า {page.url}"],
+                steps=[
+                    f"navigate to {page.url}",
+                    'click "Submit"',
+                    'verify text: "required"',
+                ],
+                expected_outcome="แสดง validation error สำหรับ required fields",
+                source_url=page.url,
+            ))
+            results.append(TestCase(
+                title=f"Form validation — invalid email: {page.title or page.url}",
+                type="form_validation",
+                priority="medium",
+                preconditions=[f"อยู่ที่หน้า {page.url}"],
+                steps=[
+                    f"navigate to {page.url}",
+                    'fill "Email" with "not-an-email"',
+                    'click "Submit"',
+                    'verify text: "invalid"',
+                ],
+                expected_outcome="แสดง error สำหรับ email format ไม่ถูกต้อง",
+                source_url=page.url,
+            ))
+        return results
+
+    def _plan_broken_link(self, pages: list[ExploredPage], base_url: str) -> list[TestCase]:
+        results = []
+        for page in pages[:5]:
+            results.append(TestCase(
+                title=f"Broken link check: {page.title or page.url}",
+                type="broken_link",
+                priority="medium",
+                preconditions=[f"อยู่ที่หน้า {page.url}"],
+                steps=[f"navigate to {page.url}"],
+                expected_outcome="ทุก link บนหน้าต้อง return HTTP 200",
+                source_url=page.url,
+            ))
+        return results
+
+    def _plan_error_page(self, base_url: str) -> list[TestCase]:
+        return [TestCase(
+            title="Error page — 404 handling",
+            type="error_page",
+            priority="low",
+            preconditions=[],
+            steps=[
+                f"navigate to {base_url}/this-page-does-not-exist-qa-test-12345",
+                'verify text: "404"',
+            ],
+            expected_outcome="เว็บแสดง 404 error page แทนที่จะ crash",
+            source_url=base_url,
+        )]
+
+    def _plan_search(self, pages: list[ExploredPage]) -> list[TestCase]:
+        results = []
+        search_pages = [p for p in pages if "search" in (p.pam_content or "").lower()]
+        for page in search_pages[:3]:
+            results.append(TestCase(
+                title=f"Search functionality: {page.title or page.url}",
+                type="search",
+                priority="medium",
+                preconditions=[f"อยู่ที่หน้า {page.url}"],
+                steps=[
+                    f"navigate to {page.url}",
+                    'fill "Search" with "test"',
+                    'click "Search"',
+                ],
+                expected_outcome="ผลการค้นหาปรากฏ",
+                source_url=page.url,
+            ))
+        return results
+
+    def _plan_logout_flow(self, pages: list[ExploredPage], base_url: str) -> list[TestCase]:
+        logout_pages = [
+            p for p in pages
+            if any("logout" in (a.action_label or "").lower() or "sign out" in (a.action_label or "").lower()
+                   for a in p.actions)
+        ]
+        if not logout_pages:
+            return []
+        page = logout_pages[0]
+        return [TestCase(
+            title="Logout flow",
+            type="logout_flow",
+            priority="high",
+            preconditions=["เข้าสู่ระบบแล้ว"],
+            steps=[
+                f"navigate to {page.url}",
+                'click "Logout"',
+            ],
+            expected_outcome="redirect กลับไปหน้า login หลัง logout",
+            source_url=page.url,
+        )]
 
     async def _plan_from_pages_functional(
         self, pages: list[ExploredPage], base_url: str = ""

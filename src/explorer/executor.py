@@ -219,6 +219,45 @@ async def _execute_step_on_page(step: ContractStep, page: Page) -> None:
                 )
         return
 
+    # select option: intercept — ลอง native <select> ก่อน fallback คลิก text
+    if step_text.lower().startswith("select option:"):
+        target = step_text[len("select option:"):].strip().strip('"\'')
+        if target:
+            try:
+                await page.select_option("select", label=target, timeout=10_000)
+                return
+            except Exception:
+                pass
+            try:
+                await page.get_by_text(target, exact=True).first.click(timeout=10_000)
+                return
+            except Exception:
+                pass
+        return
+
+    # scroll to: intercept — scroll element into view หรือ scroll to bottom
+    if step_text.lower().startswith("scroll to:"):
+        target = step_text[len("scroll to:"):].strip().strip('"\'')
+        try:
+            if target:
+                el = page.get_by_text(target, exact=False).first
+                await el.scroll_into_view_if_needed(timeout=5_000)
+            else:
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        except Exception:
+            pass
+        return
+
+    # wait ms: intercept — รอ N milliseconds (สูงสุด 5000ms)
+    if step_text.lower().startswith("wait ms:"):
+        raw = step_text[len("wait ms:"):].strip().rstrip("ms").strip()
+        try:
+            ms = min(int(raw), 5_000)
+            await page.wait_for_timeout(ms)
+        except Exception:
+            pass
+        return
+
     # Prefer action_type set by RepairEngine; re-infer from text only when unrecognised
     action = (
         step.action_type

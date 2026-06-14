@@ -85,6 +85,58 @@ def test_normalize_passes_through_snake_case_placeholder():
     assert result == ['click "select_product_page"']
 
 
+# ─── Rule A: numbered prefix stripping ──────────────────────────────────────
+
+def test_normalize_strips_numbered_prefix():
+    result = _normalize_steps(['1. คลิกปุ่ม "Login"'], "https://x.com")
+    assert any("click" in s for s in result)
+
+
+def test_normalize_strips_numbered_prefix_english():
+    result = _normalize_steps(['2. fill "Email" with "test@test.com"'], "https://x.com")
+    assert result == ['fill "Email" with "test@test.com"']
+
+
+# ─── Rule B: extended Thai verify variants ───────────────────────────────────
+
+def test_normalize_thai_verify_variants():
+    result = _normalize_steps(['เช็คว่า "Success" ปรากฏ'], "https://x.com")
+    assert result == ['verify text: "Success"']
+
+
+# ─── Rule C: scroll → skip ───────────────────────────────────────────────────
+
+def test_normalize_skips_scroll():
+    result = _normalize_steps(["scroll down to footer", "เลื่อนลงดู footer"], "https://x.com")
+    assert result == []
+
+
+# ─── Rule D: wait → skip ─────────────────────────────────────────────────────
+
+def test_normalize_skips_wait():
+    result = _normalize_steps(["wait 2 seconds", "รอ 500ms"], "https://x.com")
+    assert result == []
+
+
+# ─── Rule E: เลือก/select → select option: ───────────────────────────────────
+
+def test_normalize_select_thai():
+    result = _normalize_steps(['เลือก "Thailand"'], "https://x.com")
+    assert result == ['select option: "Thailand"']
+
+
+# ─── Rule F: fill in / type in → fill ────────────────────────────────────────
+
+def test_normalize_fill_in_to_fill():
+    result = _normalize_steps(['fill in "Email" with "test@test.com"'], "https://x.com")
+    assert result == ['fill "Email" with "test@test.com"']
+
+
+def test_normalize_type_in_to_fill():
+    result = _normalize_steps(['type in "Search" with "shoes"'], "https://x.com")
+    assert result == ['fill "Search" with "shoes"']
+
+
 # ─── _map_exception ──────────────────────────────────────────────────────────
 
 def test_map_exception_timeout():

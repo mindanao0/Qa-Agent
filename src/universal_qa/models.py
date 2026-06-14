@@ -11,7 +11,8 @@ class TestCase(BaseModel):
 
     id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
     title: str
-    type: Literal["functional", "accessibility", "security", "e2e"]
+    type: Literal["functional", "accessibility", "security", "e2e",
+                  "form_validation", "broken_link", "error_page", "search", "logout_flow"]
     priority: Literal["high", "medium", "low"]
     preconditions: list[str] = Field(default_factory=list)
     steps: list[str] = Field(..., min_length=1)

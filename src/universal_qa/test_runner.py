@@ -26,11 +26,22 @@ _SQLI_PAYLOAD = "' OR '1'='1"
 _THAI_NAV = re.compile(r'^(เปิดหน้า|ไปที่หน้า|ไปที่|นำทางไปยัง|เปิด)\s+', re.IGNORECASE)
 _THAI_FILL = re.compile(r'^(กรอก|พิมพ์|ใส่ข้อมูล|ใส่)\s+', re.IGNORECASE)
 _THAI_CLICK = re.compile(r'^(คลิกปุ่ม|คลิกลิงก์|คลิก|กดปุ่ม|กด)\s+', re.IGNORECASE)
-# Thai/English assertion keywords — Playwright ไม่รองรับ assertion โดยตรง
+# Thai/English assertion keywords — Playwright ไม่รองรับ assertion โดยตรง  (Rule B extended)
 _VERIFY_RE = re.compile(
-    r'^(ตรวจสอบ|ตรวจว่า|ยืนยัน|verify\s|assert\s|check\s+that\s)',
+    r'^(ตรวจสอบ|ตรวจว่า|ยืนยัน|เช็คว่า|เช็ค|ดูว่า|สังเกต|verify\s|assert\s|check\s+that\s|ensure\s)',
     re.IGNORECASE,
 )
+# Rule A — strip numbered-list prefix (e.g. "1. คลิก Login" → "คลิก Login")
+_NUMBERED_PREFIX_RE = re.compile(r'^\d+\.\s+')
+# Rule C — scroll steps executor cannot handle
+_SCROLL_RE = re.compile(r'^(scroll|เลื่อน)', re.IGNORECASE)
+# Rule D — wait steps executor cannot handle
+_WAIT_RE = re.compile(r'^(wait|รอ\s)', re.IGNORECASE)
+# Rule E — เลือก/select → select option:
+_THAI_SELECT_RE = re.compile(r'^(เลือก|เลือกตัวเลือก)\s+', re.IGNORECASE)
+_BARE_SELECT_RE = re.compile(r'^select\s+(?!option:)', re.IGNORECASE)
+# Rule F — fill in / type in / type → fill
+_FILL_IN_RE = re.compile(r'^(fill in|type in|type)\s+', re.IGNORECASE)
 # Match first quoted substring (ASCII double/single + Unicode left/right variants)
 _QUOTED_TEXT_RE = re.compile(
     '(?:'
@@ -63,6 +74,9 @@ def _normalize_steps(steps: list[str], source_url: str) -> list[str]:
 
     fixed = []
     for step in steps:
+        # Rule A. strip numbered-list prefix (e.g. "1. คลิก Login" → "คลิก Login")
+        step = _NUMBERED_PREFIX_RE.sub("", step)
+
         # 1. แปล Thai keywords เป็น English
         if _THAI_NAV.match(step):
             step = _THAI_NAV.sub("navigate to ", step)
@@ -82,13 +96,31 @@ def _normalize_steps(steps: list[str], source_url: str) -> list[str]:
                 step = re.sub(re.escape(path_match.group(0)), f" {full_url}", step, count=1).strip()
 
         # 3. convert assertion steps -> "verify text: X" (if quoted text found)
-        #    no quoted text -> skip (nothing to verify)
+        #    no quoted text -> skip (nothing to verify)  [Rule B extended regex above]
         if _VERIFY_RE.match(step):
             quoted_m = re.search(_QUOTED_TEXT_RE, step)
             if quoted_m:
                 extracted = next(g for g in quoted_m.groups() if g is not None)
                 fixed.append('verify text: "' + extracted + '"')
             continue
+
+        # Rule C. scroll → skip (executor cannot scroll)
+        if _SCROLL_RE.match(step):
+            continue
+
+        # Rule D. wait → skip (executor cannot wait by time)
+        if _WAIT_RE.match(step):
+            continue
+
+        # Rule E. เลือก/select → select option:
+        if _THAI_SELECT_RE.match(step):
+            step = _THAI_SELECT_RE.sub("select option: ", step)
+        elif _BARE_SELECT_RE.match(step):
+            step = _BARE_SELECT_RE.sub("select option: ", step)
+
+        # Rule F. fill in / type in / type → fill
+        if _FILL_IN_RE.match(step):
+            step = _FILL_IN_RE.sub("fill ", step)
 
         # 4. (ลบออก) click "/path" และ click snake_case — ส่งต่อให้ executor._resolve_step
         #    ซึ่งจะใช้ LLM + DOM จริงเพื่อหา element ที่ตรงกัน แทนการ skip
@@ -192,6 +224,8 @@ class UniversalTestRunner:
                 return await self._run_security(tc, page)
             if tc.type == "e2e":
                 return await self._run_e2e(tc, page)
+            if tc.type == "broken_link":
+                return await self._run_broken_link(tc, page)
             return await self._run_functional(tc, page)
         except Exception as exc:
             return TestResult(
@@ -402,6 +436,41 @@ class UniversalTestRunner:
             failure_reason=failure_reason, screenshot_path=screenshot,
             duration_ms=int((time.monotonic() - start) * 1000),
         )
+
+    async def _run_broken_link(self, tc: TestCase, page: Page) -> TestResult:
+        """ตรวจสอบ links ทุกอันบนหน้า — HTTP GET แต่ละ link ผ่าน page.request"""
+        import time as _time
+        start = _time.monotonic()
+        try:
+            await page.goto(tc.source_url, wait_until="domcontentloaded", timeout=30_000)
+            hrefs: list[str] = await page.evaluate("""() =>
+                Array.from(document.querySelectorAll('a[href]'))
+                    .map(a => a.href)
+                    .filter(h => h.startsWith('http'))
+                    .slice(0, 30)
+            """)
+            broken = []
+            for href in hrefs:
+                try:
+                    resp = await page.request.get(href, timeout=10_000)
+                    if resp.status >= 400:
+                        broken.append(f"{href} → {resp.status}")
+                except Exception:
+                    broken.append(f"{href} → timeout/error")
+            passed = len(broken) == 0
+            return TestResult(
+                test_case=tc,
+                passed=passed,
+                failure_reason=("Broken links: " + "; ".join(broken[:5])) if broken else None,
+                duration_ms=int((_time.monotonic() - start) * 1000),
+            )
+        except Exception as exc:
+            return TestResult(
+                test_case=tc,
+                passed=False,
+                failure_reason=str(exc)[:200],
+                duration_ms=0,
+            )
 
     async def _maybe_screenshot(
         self, page: Page, test_id: str, passed: bool
