@@ -1,3 +1,5 @@
+$env:PYTHONUNBUFFERED = "1"
+
 $sites = @(
     # E-commerce with login — cart, checkout, order flows
     @{ label="practicesoftwaretesting"; url="https://practicesoftwaretesting.com"; username="customer@practicesoftwaretesting.com"; password="welcome01" },
@@ -7,19 +9,27 @@ $sites = @(
     @{ label="demoqa"; url="https://demoqa.com"; username=""; password="" },
     # Large e-commerce (Magento) — search, product detail, categories
     @{ label="magento"; url="https://magento.softwaretestingboard.com"; username=""; password="" },
-    # Demo shop — login, product list, cart, checkout (standard_user/secret_sauce)
+    # Demo shop — login, product list, cart, checkout
     @{ label="saucedemo"; url="https://www.saucedemo.com"; username="standard_user"; password="secret_sauce" },
     # Full e-commerce — register/login, wishlist, checkout, contact
     @{ label="automationexercise"; url="https://automationexercise.com"; username=""; password="" },
-    # HR system — dashboard, employee, leave, recruitment (login: Admin/admin123)
+    # HR system — dashboard, employee, leave, recruitment
     @{ label="orangehrm"; url="https://opensource-demo.orangehrmlive.com"; username="Admin"; password="admin123" },
-    # Banking — accounts, transfers, loan (login: john/demo)
+    # Banking — accounts, transfers, loan
     @{ label="parabank"; url="https://parabank.parasoft.com"; username="john"; password="demo" },
     # nopCommerce — full shop with register/login/checkout
     @{ label="nopcommerce"; url="https://demo.nopcommerce.com"; username=""; password="" }
 )
 
+# เริ่มจากเว็บที่ระบุ (ข้ามเว็บที่รันแล้ว)
+$startFrom = if ($args[0]) { $args[0] } else { "" }
+$active = ($startFrom -eq "")
+
 foreach ($site in $sites) {
+    if (-not $active) {
+        if ($site.label -eq $startFrom) { $active = $true } else { continue }
+    }
+
     Write-Host "========================================"
     Write-Host "SITE: $($site.label)"
     Write-Host "URL:  $($site.url)"
