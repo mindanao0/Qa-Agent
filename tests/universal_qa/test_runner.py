@@ -71,16 +71,18 @@ def test_normalize_drops_verify_without_quoted_text():
     assert result == []
 
 
-def test_normalize_skips_click_path():
+def test_normalize_passes_through_click_path():
+    """click '/login' ต้องผ่านมายัง executor (executor._resolve_step จะ resolve ด้วย LLM)"""
     steps = ['click "/login"']
     result = _normalize_steps(steps, "https://x.com")
-    assert result == []
+    assert result == ['click "/login"']
 
 
-def test_normalize_skips_snake_case_placeholder():
+def test_normalize_passes_through_snake_case_placeholder():
+    """click snake_case ต้องผ่านมายัง executor (executor._resolve_step จะ resolve ด้วย LLM)"""
     steps = ['click "select_product_page"']
     result = _normalize_steps(steps, "https://x.com")
-    assert result == []
+    assert result == ['click "select_product_page"']
 
 
 # ─── _map_exception ──────────────────────────────────────────────────────────

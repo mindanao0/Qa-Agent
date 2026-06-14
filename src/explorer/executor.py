@@ -46,6 +46,11 @@ class HypothesisResult(BaseModel):
     steps_executed: int = 0
 
 
+class _LocatorResolution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    resolved_step: str | None = None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -115,6 +120,77 @@ async def _element_found_on_page(
         return False
     except Exception:
         return True  # Cannot determine — proceed
+
+
+# ── Ambiguous-locator detection ──────────────────────────────────────────────
+# Matches: click "/path" | click "/path/to/page" | click snake_case | click "snake_case"
+_AMBIGUOUS_CLICK_RE = re.compile(
+    r'^click\s+["“‘]?'
+    r'(?:/[^\s"”’\']+|[a-z][a-z0-9_]*_[a-z0-9_]+)'
+    r'["”’\']?\s*$',
+    re.IGNORECASE,
+)
+
+
+def _is_ambiguous_click(step_text: str) -> bool:
+    return bool(_AMBIGUOUS_CLICK_RE.match(step_text))
+
+
+async def _resolve_locator_with_llm(
+    step_text: str,
+    page: Page,
+    client: InstructorClient,
+) -> str | None:
+    """Map a vague step (path string / snake_case) to a real page element via LLM.
+
+    Gets interactive elements from the live DOM, then asks LLM to pick the
+    best match. Returns a concrete Playwright step or None on failure.
+    """
+    try:
+        elements: str = await page.evaluate("""() => {
+            const seen = new Set();
+            const rows = [];
+            document.querySelectorAll(
+                'button, a[href], input:not([type=hidden]), select, [role="button"], [role="link"]'
+            ).forEach(el => {
+                const text = (
+                    el.getAttribute('aria-label') ||
+                    (el.textContent || '').trim() ||
+                    el.getAttribute('placeholder') ||
+                    el.getAttribute('title') || ''
+                ).slice(0, 60).trim();
+                const tag = el.tagName.toLowerCase();
+                if (text && !seen.has(text)) {
+                    seen.add(text);
+                    rows.push(tag + ': "' + text + '"');
+                }
+            });
+            return rows.slice(0, 30).join('\\n');
+        }""")
+    except Exception as exc:
+        logger.debug(f"_resolve_locator_with_llm: evaluate failed — {exc!r}")
+        return None
+
+    if not elements:
+        return None
+
+    prompt = (
+        f'Step to execute: "{step_text}"\n\n'
+        f"Interactive elements on current page:\n{elements}\n\n"
+        f"Find the element that best matches the step intent.\n"
+        f"Return a Playwright step in one of these formats:\n"
+        f'  click "Element Name"\n'
+        f'  fill "Field Name" with "value"\n'
+        f"Return null in resolved_step if nothing matches."
+    )
+    try:
+        result = await client.create_structured(
+            prompt, _LocatorResolution, temperature=0.0
+        )
+        return result.resolved_step
+    except Exception as exc:
+        logger.debug(f"_resolve_locator_with_llm: LLM failed — {exc!r}")
+        return None
 
 
 async def _execute_step_on_page(step: ContractStep, page: Page) -> None:
@@ -302,6 +378,24 @@ class HypothesisExecutor:
         self._client = instructor_client
         self._sfg_store = sfg_store
 
+    async def _resolve_step(self, step: ContractStep, page: Page) -> ContractStep:
+        """If the step has a vague locator (path / snake_case), ask LLM to resolve it."""
+        if not _is_ambiguous_click(step.locator):
+            return step
+        resolved_text = await _resolve_locator_with_llm(step.locator, page, self._client)
+        if not resolved_text:
+            return step
+        logger.info(
+            f"HypothesisExecutor | resolved '{step.locator}' → '{resolved_text}'"
+        )
+        return ContractStep(
+            step_number=step.step_number,
+            action_type=_classify_step(resolved_text),
+            locator=resolved_text,
+            input_value=step.input_value,
+            expected_state_hash=step.expected_state_hash,
+        )
+
     async def execute(
         self,
         hypothesis: TestHypothesis,
@@ -405,6 +499,9 @@ class HypothesisExecutor:
                     repair_attempted=repairs_used > 0,
                     steps_executed=steps_executed,
                 )
+
+            # ── Resolve ambiguous locator via LLM ─────────────────────────
+            step = await self._resolve_step(step, page)
 
             # ── Execute step ───────────────────────────────────────────────
             step_error: Exception | None = None

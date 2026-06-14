@@ -90,15 +90,10 @@ def _normalize_steps(steps: list[str], source_url: str) -> list[str]:
                 fixed.append('verify text: "' + extracted + '"')
             continue
 
-        # 4. skip: click "/path" — path string ไม่ใช่ชื่อ element จริง
-        _click_path_m = re.match(r'^click\s+["\']?(/[^\s"\']+)["\']?\s*$', step, re.IGNORECASE)
-        if _click_path_m:
-            continue
+        # 4. (ลบออก) click "/path" และ click snake_case — ส่งต่อให้ executor._resolve_step
+        #    ซึ่งจะใช้ LLM + DOM จริงเพื่อหา element ที่ตรงกัน แทนการ skip
 
-        # 5. skip: click "snake_case" — placeholder ที่ LLM สร้างขึ้น ไม่ใช่ element จริง
-        _click_ph_m = re.match(r'^click\s+["\']?([a-z][a-z0-9_]{3,})["\']?\s*$', step, re.IGNORECASE)
-        if _click_ph_m and "_" in _click_ph_m.group(1):
-            continue
+        # 5. (รวมกับข้อ 4 แล้ว)
 
         # 6. skip: login click/navigate บนหน้า post-login ที่ชัดเจน (inventory/cart/…)
         #    ตรวจ path ของ source URL แทน netloc เพราะ saucedemo login อยู่ที่ "/" ไม่มี "login" ใน URL
