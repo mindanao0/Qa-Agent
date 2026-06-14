@@ -76,7 +76,7 @@ class AuthManager:
                 await page.get_by_role("button", name="sign in").click(timeout=5_000)
             except Exception:
                 pass
-        await page.wait_for_load_state("domcontentloaded", timeout=10_000)
+        await page.wait_for_load_state("domcontentloaded", timeout=30_000)
         logger.info(f"AuthManager: login attempted for {self._username}")
         return (self._username or "", self._password or "")
 
@@ -96,7 +96,7 @@ class AuthManager:
                 reg_link = page.get_by_role("link", name="register")
             if await reg_link.count():
                 await reg_link.first.click(timeout=5_000)
-                await page.wait_for_load_state("domcontentloaded", timeout=10_000)
+                await page.wait_for_load_state("domcontentloaded", timeout=30_000)
         except Exception:
             pass
 
@@ -122,7 +122,7 @@ class AuthManager:
                 await page.get_by_role("button", name="register").click(timeout=5_000)
             except Exception:
                 pass
-        await page.wait_for_load_state("domcontentloaded", timeout=10_000)
+        await page.wait_for_load_state("domcontentloaded", timeout=30_000)
         logger.info(f"AuthManager: auto-registered as {email}")
         self._username = email
         self._password = password

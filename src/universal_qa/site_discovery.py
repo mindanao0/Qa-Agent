@@ -59,7 +59,7 @@ class SiteDiscovery:
                 if current != target:
                     await page.goto(url, wait_until="networkidle", timeout=30_000)
                 else:
-                    await page.wait_for_load_state("networkidle", timeout=10_000)
+                    await page.wait_for_load_state("domcontentloaded", timeout=30_000)
                 visited.add(url)
                 await self._visit_and_record(crawler, page)
                 pages_visited += 1

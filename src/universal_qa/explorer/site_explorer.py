@@ -120,7 +120,7 @@ class SiteExplorer:
         if _clean_url(page.url) != _clean_url(url):
             await page.goto(url, wait_until="networkidle", timeout=30_000)
         else:
-            await page.wait_for_load_state("networkidle", timeout=10_000)
+            await page.wait_for_load_state("domcontentloaded", timeout=30_000)
 
         if await self._guard.is_session_lost(page):
             await self._guard.recover(page)
