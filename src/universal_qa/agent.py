@@ -70,9 +70,11 @@ class UniversalQAAgent:
                 # Phase 1: Navigate + Auth
                 await page.goto(self._url, wait_until="domcontentloaded", timeout=30_000)
                 await self._auth.setup(page)
+                # รอให้ SPA router อัปเดต URL หลัง auth (Angular/React redirect ช้ากว่า DOM)
+                await page.wait_for_timeout(1_500)
 
                 # Phase 2: Discover URLs (fast)
-                discover_url = page.url if page.url != self._url else self._url
+                discover_url = page.url
                 logger.info(f"Phase 2: site discovery from {discover_url}")
                 sfg_store = await self._discovery.discover(page, discover_url)
                 discovered_urls = [

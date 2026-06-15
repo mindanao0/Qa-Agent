@@ -57,9 +57,20 @@ class SiteDiscovery:
                 current = page.url.split("?")[0].split("#")[0]
                 target = url.split("?")[0].split("#")[0]
                 if current != target:
-                    await page.goto(url, wait_until="networkidle", timeout=30_000)
+                    # domcontentloaded เร็วกว่า networkidle และไม่ hang บน heavy sites
+                    await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                    # รอ JS render navigation (Magento/SPA mega-menu โหลดหลัง DOMContentLoaded)
+                    await page.wait_for_timeout(1_500)
                 else:
                     await page.wait_for_load_state("domcontentloaded", timeout=30_000)
+
+                # Detect Cloudflare challenge — รอให้ผ่านก่อน extract links
+                _cf_title = (await page.title()).lower()
+                if any(kw in _cf_title for kw in ("cloudflare", "just a moment", "attention required", "checking your")):
+                    logger.info(f"SiteDiscovery: Cloudflare challenge at {url} — waiting 6s")
+                    await page.wait_for_timeout(6_000)
+                    await page.wait_for_load_state("domcontentloaded", timeout=15_000)
+
                 visited.add(url)
                 await self._visit_and_record(crawler, page)
                 pages_visited += 1
@@ -91,7 +102,10 @@ class SiteDiscovery:
                     )
                     for link in all_links:
                         clean = link.split("?")[0].split("#")[0]
-                        if urlparse(clean).netloc == base_domain and clean not in visited:
+                        link_netloc = urlparse(clean).netloc
+                        # normalize www prefix: www.example.com == example.com
+                        if (link_netloc.removeprefix("www.") == base_domain.removeprefix("www.")
+                                and clean not in visited):
                             queue.append((clean, depth + 1))
             except Exception as exc:
                 logger.warning(f"SiteDiscovery: {url} skipped — {exc!r}")

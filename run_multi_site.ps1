@@ -18,7 +18,17 @@ $sites = @(
     # Banking — accounts, transfers, loan
     @{ label="parabank"; url="https://parabank.parasoft.com"; username="john"; password="demo" },
     # nopCommerce — full shop with register/login/checkout
-    @{ label="nopcommerce"; url="https://demo.nopcommerce.com"; username=""; password="" }
+    @{ label="nopcommerce"; url="https://demo.nopcommerce.com"; username=""; password="" },
+    # PrestaShop — e-commerce demo (no auth required for browsing)
+    @{ label="prestashop"; url="https://demo.prestashop.com/#/en"; username=""; password="" },
+    # Moodle — LMS with courses, quizzes, forums
+    @{ label="moodle"; url="https://school.moodledemo.net"; username="admin"; password="sandbox" },
+    # PHPTravels — travel booking (flights, hotels, tours)
+    @{ label="phptravels"; url="https://phptravels.net/demo"; username="user@phptravels.net"; password="demouser" },
+    # Redmine — project management, issues, wiki (public browse)
+    @{ label="redmine"; url="https://demo.redmine.org"; username=""; password="" },
+    # Kanboard — kanban task management
+    @{ label="kanboard"; url="https://demo.kanboard.org"; username="admin"; password="admin" }
 )
 
 # เริ่มจากเว็บที่ระบุ (ข้ามเว็บที่รันแล้ว)
