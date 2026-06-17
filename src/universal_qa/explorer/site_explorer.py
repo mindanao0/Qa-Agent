@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re as _re
 import time
 from collections import deque
 from urllib.parse import urlparse
@@ -177,12 +178,20 @@ class SiteExplorer:
     ) -> ExploredAction | None:
         pre_url = _clean_url(page.url)
         pre_badge = await self._snapshot_state(page)
+
+        if cand.is_in_iframe:
+            return await self._try_click_iframe(page, url, cand, base_domain, pre_url, pre_badge)
+
+        loc = await self._resolve_locator(page, cand)
+        if loc is None:
+            logger.debug(f"  no locator for '{cand.label}' ({cand.role})")
+            return None
         try:
-            loc = self._locate(page, cand)
-            await loc.click(timeout=1_500)
-            await page.wait_for_load_state("networkidle", timeout=1_000)
+            await loc.wait_for(state="visible", timeout=2_000)
+            await loc.click(timeout=3_000)
+            await page.wait_for_load_state("networkidle", timeout=2_000)
         except Exception as exc:
-            logger.debug(f"  click '{cand.label}' skipped: {exc!r}")
+            logger.debug(f"  click '{cand.label}' failed: {exc!r}")
             return None
 
         post_url = _clean_url(page.url)
@@ -205,14 +214,95 @@ class SiteExplorer:
             )
         return None
 
-    @staticmethod
-    def _locate(page: Page, cand: ElementCandidate):
-        # ARIA role+name primary, then text. No CSS selectors (project rule).
+    async def _resolve_locator(self, page: Page, cand: ElementCandidate):
+        """Multi-strategy locator waterfall: role+name → label → text. No CSS."""
+        async def _count(loc_fn):
+            try:
+                loc = loc_fn()
+                if await loc.count() > 0:
+                    return loc
+            except Exception:
+                pass
+            return None
+
+        # 1. role + exact name
         if cand.role and cand.name:
-            return page.get_by_role(cand.role, name=cand.name).first
+            loc = await _count(lambda: page.get_by_role(cand.role, name=cand.name).first)
+            if loc:
+                return loc
+
+        # 2. role + partial name (case-insensitive, first 40 chars)
+        if cand.role and cand.name and len(cand.name) > 2:
+            s = cand.name[:40]
+            loc = await _count(
+                lambda: page.get_by_role(
+                    cand.role, name=_re.compile(_re.escape(s), _re.IGNORECASE)
+                ).first
+            )
+            if loc:
+                return loc
+
+        # 3. get_by_label (inputs/selects)
         if cand.name:
-            return page.get_by_text(cand.name).first
-        return page.get_by_text(cand.label).first
+            loc = await _count(lambda: page.get_by_label(cand.name).first)
+            if loc:
+                return loc
+
+        # 4. get_by_text exact
+        if cand.name:
+            loc = await _count(lambda: page.get_by_text(cand.name, exact=True).first)
+            if loc:
+                return loc
+
+        # 5. get_by_text partial (trimmed label)
+        label = (cand.name or cand.label or "")[:40]
+        if label:
+            loc = await _count(lambda: page.get_by_text(label).first)
+            if loc:
+                return loc
+
+        return None
+
+    async def _try_click_iframe(
+        self, page: Page, url: str, cand: ElementCandidate, base_domain: str,
+        pre_url: str, pre_badge: str,
+    ) -> ExploredAction | None:
+        for frame in page.frames:
+            if frame == page.main_frame:
+                continue
+            try:
+                if cand.role and cand.name:
+                    loc = frame.get_by_role(cand.role, name=cand.name).first
+                elif cand.name:
+                    loc = frame.get_by_text(cand.name, exact=True).first
+                else:
+                    continue
+                if await loc.count() == 0:
+                    continue
+                await loc.wait_for(state="visible", timeout=2_000)
+                await loc.click(timeout=3_000)
+                await page.wait_for_load_state("networkidle", timeout=2_000)
+            except Exception:
+                continue
+
+            post_url = _clean_url(page.url)
+            if post_url != pre_url and urlparse(post_url).netloc == base_domain:
+                logger.info(f"  → [iframe] คลิก \"{cand.label}\" ──► navigate: {post_url} ✓")
+                return ExploredAction(
+                    page_url=url, action_label=cand.label,
+                    element_role=cand.role, element_name=cand.name,
+                    element_selector=cand.selector, leads_to_url=page.url,
+                )
+            post_badge = await self._snapshot_state(page)
+            if post_badge != pre_badge:
+                logger.info(f"  → [iframe] คลิก \"{cand.label}\" ──► state เปลี่ยน")
+                return ExploredAction(
+                    page_url=url, action_label=cand.label,
+                    element_role=cand.role, element_name=cand.name,
+                    element_selector=cand.selector,
+                    state_change={"snapshot": "changed"},
+                )
+        return None
 
     async def _snapshot_state(self, page: Page) -> str:
         try:

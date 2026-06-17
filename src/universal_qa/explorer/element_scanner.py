@@ -14,11 +14,12 @@ _SCAN_JS = """
 () => {
     const out = [];
     const seen = new Set();
+    const TAG_ROLE = {BUTTON:'button', A:'link', INPUT:'textbox', SELECT:'combobox', TEXTAREA:'textbox'};
     function describe(el, container) {
-        const role = el.getAttribute('role')
-            || ({BUTTON:'button', A:'link', INPUT:'textbox', SELECT:'combobox'})[el.tagName] || null;
+        const role = el.getAttribute('role') || TAG_ROLE[el.tagName] || null;
         const name = (el.getAttribute('aria-label')
-            || el.textContent || el.value || '').trim().slice(0, 60);
+            || el.getAttribute('placeholder')
+            || el.textContent || el.value || '').trim().slice(0, 80);
         const label = name || role || el.tagName.toLowerCase();
         if (!label || seen.has(container + '|' + label)) return;
         seen.add(container + '|' + label);
@@ -29,7 +30,11 @@ _SCAN_JS = """
         out.push({label, role, name: name || null, selector: sel,
                   container, is_in_iframe: false, is_in_shadow: container === 'shadow'});
     }
-    const SEL = 'a, button, [role=button], [role=link], input[type=submit], select, [onclick]';
+    const SEL = [
+        'a[href]', 'button', '[role=button]', '[role=link]',
+        '[role=tab]', '[role=menuitem]', '[role=option]',
+        'input[type=submit]', 'input[type=button]', 'select', '[onclick]'
+    ].join(', ');
     function containerOf(el) {
         let p = el;
         while (p) {
@@ -48,7 +53,7 @@ _SCAN_JS = """
             host.shadowRoot.querySelectorAll(SEL).forEach(el => describe(el, 'shadow'));
         }
     });
-    return out.slice(0, 40);
+    return out.slice(0, 60);
 }
 """
 

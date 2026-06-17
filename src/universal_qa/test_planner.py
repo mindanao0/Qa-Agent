@@ -291,198 +291,154 @@ class UniversalTestPlanner:
     async def _plan_from_pages_functional(
         self, pages: list[ExploredPage], base_url: str = ""
     ) -> list[TestCase]:
-        _post_login_keywords = ("inventory", "cart", "checkout", "dashboard", "profile", "account")
-        _login_page_keywords = ("login", "signin", "sign-in", "register", "signup")
+        """Per-action prompts — ถาม LLM ทีละ element แทนทั้งหน้า."""
+        _post_login_kw = ("inventory", "cart", "checkout", "dashboard", "profile", "account")
+        _login_kw = ("login", "signin", "sign-in", "register", "signup")
 
         results: list[TestCase] = []
         for page in pages:
-            _is_post_login = (
-                any(k in page.url.lower() for k in _post_login_keywords)
-                or (
-                    page.url.rstrip("/") != base_url.rstrip("/")
-                    and not any(k in page.url.lower() for k in _login_page_keywords)
-                )
-            ) if base_url else any(k in page.url.lower() for k in _post_login_keywords)
-            login_note = (
-                "ข้อควรระวัง: ผู้ใช้ได้ทำการ login แล้ว ห้าม generate step ที่เกี่ยวกับ login เช่น 'click Login', 'navigate to /login', หรือ 'กรอก username/password' ซ้ำ\n"
-                if _is_post_login
-                else ""
-            )
-            action_summary = ", ".join(
-                a.action_label for a in page.actions[:10] if not a.is_destructive
-            ) or "ไม่พบ action"
-            prompt = (
-                f"คุณเป็น QA Engineer กรุณาเขียน test case 2-3 ข้อ "
-                f"(อย่างน้อย 1 happy-path และ 1 negative) "
-                f"สำหรับหน้าเว็บนี้ในรูปแบบ JSON **ตอบเป็นภาษาไทยทั้งหมด**\n\n"
-                f"{login_note}"
-                f"URL ของหน้านี้: {page.url}\n"
-                f"ชื่อหน้า: {page.title}\n"
-                f"สรุปเนื้อหาหน้า:\n{page.pam_content[:800]}\n"
-                f"Actions ที่พบ: {action_summary}\n\n"
-                f"กฎการเขียน steps (สำคัญมาก — ใช้ภาษาไทยล้วน):\n"
-                f"- ขั้นตอนเปิดหน้า ต้องใช้ URL เต็มเสมอ เช่น: เปิดหน้า {page.url}\n"
-                f"- ขั้นตอนคลิก ต้องใส่ข้อความบนปุ่ม/ลิงก์ใน double quotes เช่น: "
-                f"คลิกปุ่ม \"Add to cart\"\n"
-                f"- ขั้นตอนกรอกข้อมูล ต้องระบุชื่อ field ใน double quotes เช่น: "
-                f"กรอก \"Username\" ด้วย standard_user\n"
-                f"- ห้ามใช้ path เช่น /login หรือ /products ให้ใช้ URL เต็มหรือชื่อปุ่มแทนเสมอ\n"
-                f"- ห้ามใช้ path string เป็นชื่อปุ่ม เช่น \"/search\" หรือ \"/cart\" คือ ผิด "
-                f"— ต้องเป็นข้อความที่เห็นบนปุ่มจริงๆ เท่านั้น เช่น \"Search Products!\" หรือ \"View Cart\"\n"
-                f"- ห้ามใช้ชื่อแบบ snake_case เช่น select_product_page หรือ stock_page คือ ผิด\n"
-                f"- ตัวอย่างที่ถูกต้องสำหรับ search: กรอก \"Search Product\" ด้วย 'T-shirt' "
-                f"แล้ว คลิกปุ่ม \"Search Products!\"\n\n"
-                f"ส่งกลับ JSON ที่มี field 'test_cases': รายการ object ที่มี "
-                f"title (ชื่อ test case ภาษาไทย), priority (high/medium/low), "
-                f"preconditions (รายการเงื่อนไขก่อนทดสอบ ภาษาไทย), "
-                f"steps (รายการขั้นตอนภาษาไทยตามกฎด้านบน อย่างน้อย 1 ขั้นตอน), "
-                f"expected_outcome (ผลลัพธ์ที่คาดหวัง ภาษาไทย)"
-            )
-            try:
-                response: _FuncResponse = await self._client.create_structured(
-                    prompt, _FuncResponse, temperature=0.1
-                )
-                for item in response.test_cases:
-                    results.append(TestCase(
-                        title=item.title,
-                        type="functional",
-                        priority=item.priority,
-                        preconditions=item.preconditions,
-                        steps=item.steps,
-                        expected_outcome=item.expected_outcome,
-                        source_url=page.url,
-                    ))
-            except (StructuredGenerationError, Exception) as exc:
-                logger.warning(f"UniversalTestPlanner: LLM failed for {page.url}: {exc!r}")
+            non_destr = [a for a in page.actions if not a.is_destructive]
+            if not non_destr:
                 results.append(TestCase(
-                    title=f"ตรวจสอบว่าหน้า {page.title} โหลดได้",
-                    type="functional",
-                    priority="medium",
+                    title=f"ตรวจสอบว่าหน้า {page.title or page.url} โหลดได้",
+                    type="functional", priority="medium",
                     steps=[f"เปิดหน้า {page.url}", "ตรวจสอบว่าชื่อหน้าแสดงขึ้นมา"],
                     expected_outcome="หน้าเว็บโหลดสำเร็จโดยไม่มี error",
                     source_url=page.url,
                 ))
+                continue
+
+            _is_post_login = (
+                any(k in page.url.lower() for k in _post_login_kw)
+                or (
+                    page.url.rstrip("/") != base_url.rstrip("/")
+                    and not any(k in page.url.lower() for k in _login_kw)
+                )
+            ) if base_url else any(k in page.url.lower() for k in _post_login_kw)
+            login_note = (
+                "ห้าม generate step เกี่ยวกับ login เช่น click Login หรือ navigate /login\n"
+                if _is_post_login else ""
+            )
+
+            for action in non_destr[:20]:  # max 20 elements per page
+                name = action.element_name or action.action_label
+                role = action.element_role or "element"
+                dest = f" (นำไปยัง {action.leads_to_url})" if action.leads_to_url else ""
+                prompt = (
+                    f"เขียน test case 1 ข้อสำหรับ element นี้ (JSON ภาษาไทย)\n"
+                    f"{login_note}"
+                    f"หน้า: {page.url}\n"
+                    f"Element: {role} \"{name}\"{dest}\n\n"
+                    f"กฎ steps: ภาษาไทย, ชื่อปุ่มใน double quotes\n"
+                    f"ตัวอย่าง: คลิกปุ่ม \"Add to cart\"\n\n"
+                    f"JSON: {{\"test_cases\": [{{\"title\": \"...\", "
+                    f"\"priority\": \"high\"|\"medium\"|\"low\", "
+                    f"\"preconditions\": [...], \"steps\": [\"...\", ...], "
+                    f"\"expected_outcome\": \"...\"}}]}}"
+                )
+                try:
+                    resp: _FuncResponse = await self._client.create_structured(
+                        prompt, _FuncResponse, temperature=0.1
+                    )
+                    for item in resp.test_cases[:1]:
+                        results.append(TestCase(
+                            title=item.title,
+                            type="functional",
+                            priority=item.priority,
+                            preconditions=item.preconditions,
+                            steps=item.steps,
+                            expected_outcome=item.expected_outcome,
+                            source_url=page.url,
+                        ))
+                except Exception as exc:
+                    logger.warning(f"Per-action LLM failed '{name}': {exc!r}")
+                    step = f'คลิกปุ่ม "{name}"' if role == "button" else f'คลิก "{name}"'
+                    results.append(TestCase(
+                        title=f"ทดสอบ {action.action_label}",
+                        type="functional", priority="medium",
+                        preconditions=[f"อยู่ที่หน้า {page.url}"],
+                        steps=[f"เปิดหน้า {page.url}", step],
+                        expected_outcome=f"หน้าเว็บตอบสนองต่อการคลิก {name} ได้ถูกต้อง",
+                        source_url=page.url,
+                    ))
         return results
 
     async def _plan_from_pages_negative(
         self, nav_map: NavigationMap
     ) -> list[TestCase]:
-        """Generate negative test cases (validation errors, wrong input) per page."""
-        _post_login_keywords = ("inventory", "cart", "checkout", "dashboard", "profile", "account")
-        _login_page_keywords = ("login", "signin", "sign-in", "register", "signup")
+        """Per-action negative test cases — focus on form-like elements only."""
+        _form_roles = frozenset({"button", "textbox", "combobox", "searchbox", "spinbutton"})
+        _form_kw = ("submit", "sign", "login", "register", "search", "send", "save", "add")
 
         results: list[TestCase] = []
         for page in nav_map.pages:
-            if not page.actions:
+            form_actions = [
+                a for a in page.actions
+                if not a.is_destructive
+                and (
+                    (a.element_role or "") in _form_roles
+                    or any(k in (a.action_label or "").lower() for k in _form_kw)
+                )
+            ]
+            if not form_actions and "form" not in (page.pam_content or "").lower():
                 continue
-            _is_post_login = (
-                any(k in page.url.lower() for k in _post_login_keywords)
-                or (
-                    page.url.rstrip("/") != nav_map.base_url.rstrip("/")
-                    and not any(k in page.url.lower() for k in _login_page_keywords)
+            if not form_actions:
+                form_actions = [a for a in page.actions[:3] if not a.is_destructive]
+            for action in form_actions[:3]:  # max 3 per page
+                name = action.element_name or action.action_label
+                role = action.element_role or "element"
+                prompt = (
+                    f"เขียน negative test case 1 ข้อสำหรับ element นี้ (JSON ภาษาไทย)\n"
+                    f"หน้า: {page.url}\n"
+                    f"Element: {role} \"{name}\"\n\n"
+                    f"เน้น: กรอกข้อมูลผิด/ว่าง → validation error\n"
+                    f"กฎ steps: ภาษาไทย, ชื่อ field ใน double quotes\n"
+                    f"JSON: {{\"test_cases\": [{{\"title\": \"...\", \"priority\": ..., "
+                    f"\"preconditions\": [...], \"steps\": [...], \"expected_outcome\": \"...\"}}]}}"
                 )
-            )
-            login_note = (
-                "ข้อควรระวัง: ผู้ใช้ได้ทำการ login แล้ว ห้าม generate step ที่เกี่ยวกับ login เช่น 'click Login', 'navigate to /login', หรือ 'กรอก username/password' ซ้ำ\n"
-                if _is_post_login
-                else ""
-            )
-            action_summary = ", ".join(
-                a.action_label for a in page.actions[:10] if not a.is_destructive
-            ) or "ไม่พบ action"
-            prompt = (
-                f"คุณเป็น QA Engineer กรุณาเขียน negative test case 2-3 ข้อ "
-                f"สำหรับหน้าเว็บนี้ในรูปแบบ JSON **ตอบเป็นภาษาไทยทั้งหมด**\n\n"
-                f"{login_note}"
-                f"URL ของหน้านี้: {page.url}\n"
-                f"ชื่อหน้า: {page.title}\n"
-                f"สรุปเนื้อหาหน้า:\n{page.pam_content[:800]}\n"
-                f"Actions ที่พบ: {action_summary}\n\n"
-                f"เน้นเฉพาะ negative cases เช่น:\n"
-                f"- กรอก field ว่าง → error message\n"
-                f"- กรอกข้อมูลผิดรูปแบบ → validation error\n"
-                f"- ใช้ข้อมูลที่ไม่ถูกต้อง → ระบบปฏิเสธ\n\n"
-                f"กฎการเขียน steps (สำคัญมาก — ใช้ภาษาไทยล้วน):\n"
-                f"- ขั้นตอนเปิดหน้า ต้องใช้ URL เต็มเสมอ เช่น: เปิดหน้า {page.url}\n"
-                f"- ขั้นตอนคลิก ต้องใส่ข้อความบนปุ่มใน double quotes เช่น: คลิกปุ่ม \"Submit\"\n"
-                f"- ขั้นตอนกรอก ต้องระบุชื่อ field ใน double quotes เช่น: กรอก \"Email\" ด้วย invalid\n"
-                f"- ห้ามใช้ path string เช่น \"/search\" เป็นชื่อปุ่ม\n"
-                f"- ห้ามใช้ snake_case เช่น login_page\n\n"
-                f"ส่งกลับ JSON ที่มี field 'test_cases': รายการ object ที่มี "
-                f"title (ชื่อ test case ภาษาไทย), priority (high/medium/low), "
-                f"preconditions (รายการเงื่อนไขก่อนทดสอบ ภาษาไทย), "
-                f"steps (รายการขั้นตอนภาษาไทยตามกฎด้านบน อย่างน้อย 1 ขั้นตอน), "
-                f"expected_outcome (ผลลัพธ์ที่คาดหวัง ภาษาไทย)"
-            )
-            try:
-                response = await self._client.create_structured(
-                    prompt, _FuncResponse, temperature=0.1
-                )
-                for item in response.test_cases:
-                    results.append(TestCase(
-                        title=item.title,
-                        type="functional",
-                        priority=item.priority,
-                        preconditions=item.preconditions,
-                        steps=item.steps,
-                        expected_outcome=item.expected_outcome,
-                        source_url=page.url,
-                    ))
-            except Exception as exc:
-                logger.warning(f"Negative gen failed for {page.url}: {exc!r}")
+                try:
+                    resp = await self._client.create_structured(
+                        prompt, _FuncResponse, temperature=0.1
+                    )
+                    for item in resp.test_cases[:1]:
+                        results.append(TestCase(
+                            title=item.title,
+                            type="functional",
+                            priority=item.priority,
+                            preconditions=item.preconditions,
+                            steps=item.steps,
+                            expected_outcome=item.expected_outcome,
+                            source_url=page.url,
+                        ))
+                except Exception as exc:
+                    logger.warning(f"Negative gen failed '{name}': {exc!r}")
         return results
 
     async def _plan_from_pages_edge(
         self, nav_map: NavigationMap
     ) -> list[TestCase]:
-        """Generate edge case test cases (empty state, boundary, unexpected) per page."""
-        _post_login_keywords = ("inventory", "cart", "checkout", "dashboard", "profile", "account")
-        _login_page_keywords = ("login", "signin", "sign-in", "register", "signup")
-
+        """Edge case per page — prompt ตัด PAM content ออก เหลือแค่ action summary."""
         results: list[TestCase] = []
         for page in nav_map.pages:
             if not page.actions:
                 continue
-            _is_post_login = (
-                any(k in page.url.lower() for k in _post_login_keywords)
-                or (
-                    page.url.rstrip("/") != nav_map.base_url.rstrip("/")
-                    and not any(k in page.url.lower() for k in _login_page_keywords)
-                )
-            )
-            login_note = (
-                "ข้อควรระวัง: ผู้ใช้ได้ทำการ login แล้ว ห้าม generate step ที่เกี่ยวกับ login เช่น 'click Login', 'navigate to /login', หรือ 'กรอก username/password' ซ้ำ\n"
-                if _is_post_login
-                else ""
-            )
             action_summary = ", ".join(
-                a.action_label for a in page.actions[:10] if not a.is_destructive
+                f"\"{a.action_label}\"" for a in page.actions[:5] if not a.is_destructive
             ) or "ไม่พบ action"
             prompt = (
-                f"คุณเป็น QA Engineer กรุณาเขียน edge case test case 1-2 ข้อ "
-                f"สำหรับหน้าเว็บนี้ในรูปแบบ JSON **ตอบเป็นภาษาไทยทั้งหมด**\n\n"
-                f"{login_note}"
-                f"URL ของหน้านี้: {page.url}\n"
-                f"ชื่อหน้า: {page.title}\n"
-                f"สรุปเนื้อหาหน้า:\n{page.pam_content[:800]}\n"
-                f"Actions ที่พบ: {action_summary}\n\n"
-                f"เน้นเฉพาะ edge cases เช่น:\n"
-                f"- state ว่างเปล่า (empty state)\n"
-                f"- ค่า boundary (ตัวอักษรมากเกินไป, จำนวน 0 หรือ -1)\n"
-                f"- พฤติกรรมที่ไม่คาดคิด (ปิด browser กลางคัน, back button)\n\n"
-                f"กฎการเขียน steps (สำคัญมาก — ใช้ภาษาไทยล้วน):\n"
-                f"- ขั้นตอนเปิดหน้า ต้องใช้ URL เต็มเสมอ เช่น: เปิดหน้า {page.url}\n"
-                f"- ขั้นตอนคลิก ต้องใส่ข้อความบนปุ่มใน double quotes เช่น: คลิกปุ่ม \"Submit\"\n"
-                f"- ขั้นตอนกรอก ต้องระบุชื่อ field ใน double quotes\n"
-                f"- ห้ามใช้ path string หรือ snake_case\n\n"
-                f"ส่งกลับ JSON ที่มี field 'test_cases': รายการ object ที่มี "
-                f"title, priority, preconditions, steps, expected_outcome"
+                f"เขียน edge case test case 1 ข้อสำหรับหน้า (JSON ภาษาไทย)\n"
+                f"หน้า: {page.url}\n"
+                f"Actions: {action_summary}\n\n"
+                f"เน้น: empty state, boundary values, back button\n"
+                f"กฎ steps: ภาษาไทย, ชื่อปุ่มใน double quotes\n"
+                f"JSON: {{\"test_cases\": [{{\"title\": \"...\", \"priority\": ..., "
+                f"\"preconditions\": [...], \"steps\": [...], \"expected_outcome\": \"...\"}}]}}"
             )
             try:
-                response = await self._client.create_structured(
+                resp = await self._client.create_structured(
                     prompt, _FuncResponse, temperature=0.1
                 )
-                for item in response.test_cases:
+                for item in resp.test_cases[:1]:
                     results.append(TestCase(
                         title=item.title,
                         type="functional",
