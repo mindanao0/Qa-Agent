@@ -1,0 +1,1083 @@
+{
+  "label": "baseline",
+  "mode": "baseline",
+  "model": "qwen2.5-coder:7b-instruct-q4_K_M",
+  "generated_at": "2026-06-17T15:33:31.855707+00:00",
+  "n_pages": 20,
+  "metrics": {
+    "json_valid_rate": 0.9934,
+    "coverage_score": 0.7592,
+    "assertion_quality": 0.86
+  },
+  "diagnostics": {
+    "total_llm_calls": 151,
+    "total_llm_calls_valid": 150,
+    "total_llm_tests": 150,
+    "total_rule_tests": 121,
+    "avg_llm_tests_per_page": 7.5,
+    "scenario_coverage_micro_llm": 0.7794,
+    "scenario_coverage_micro_all": 0.7941,
+    "assertion_quality_rule_tests": 1.0,
+    "total_scenarios": 68,
+    "total_eval_seconds": 1789.1
+  },
+  "per_page": [
+    {
+      "page_id": "saucedemo_login",
+      "site": "saucedemo",
+      "url": "https://www.saucedemo.com/",
+      "elapsed_s": 34.6,
+      "llm_calls": 7,
+      "llm_calls_valid": 7,
+      "n_llm_tests": 7,
+      "n_rule_tests": 7,
+      "n_concrete_llm": 6,
+      "n_concrete_rule": 7,
+      "expected_test_count": 6,
+      "n_scenarios": 5,
+      "covered_scenarios_llm": [
+        "valid_login",
+        "wrong_password",
+        "empty_username",
+        "empty_password"
+      ],
+      "covered_scenarios_all": [
+        "valid_login",
+        "wrong_password",
+        "empty_username",
+        "empty_password"
+      ],
+      "page_json_valid_rate": 1.0,
+      "page_coverage_llm": 0.8,
+      "page_assertion_quality": 0.8571,
+      "errors": [],
+      "sample_tests": [
+        {
+          "title": "ทดสอบการกรอกข้อมูลใน textbox \"Username\"",
+          "expected_outcome": "ข้อมูล 'standard_user' ควรจะแสดงใน textbox \"Username\" และไม่ควรมีข้อผิดพลาดหรือเตือนใดๆ",
+          "concrete": true,
+          "reason": "concrete:ผิดพลาด"
+        },
+        {
+          "title": "ทดสอบการกรอกข้อมูลใน textbox 'Password'",
+          "expected_outcome": "ข้อมูล 'secret_sauce' จะถูกแสดงใน textbox 'Password'",
+          "concrete": false,
+          "reason": "no-concrete-signal"
+        },
+        {
+          "title": "ทดสอบการคลิกปุ่ม 'Login'",
+          "expected_outcome": "ควรนำผู้ใช้ไปยังหน้า https://www.saucedemo.com/inventory.html",
+          "concrete": true,
+          "reason": "specific-url"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน textbox Username",
+          "expected_outcome": "ควรแสดง error message ว่า \"Username is required\"",
+          "concrete": true,
+          "reason": "concrete:error"
+        }
+      ]
+    },
+    {
+      "page_id": "saucedemo_inventory",
+      "site": "saucedemo",
+      "url": "https://www.saucedemo.com/inventory.html",
+      "elapsed_s": 62.0,
+      "llm_calls": 9,
+      "llm_calls_valid": 9,
+      "n_llm_tests": 9,
+      "n_rule_tests": 5,
+      "n_concrete_llm": 7,
+      "n_concrete_rule": 5,
+      "expected_test_count": 7,
+      "n_scenarios": 5,
+      "covered_scenarios_llm": [
+        "add_increments_badge",
+        "sort_reorders",
+        "open_cart",
+        "product_detail"
+      ],
+      "covered_scenarios_all": [
+        "add_increments_badge",
+        "sort_reorders",
+        "open_cart",
+        "product_detail"
+      ],
+      "page_json_valid_rate": 1.0,
+      "page_coverage_llm": 0.8,
+      "page_assertion_quality": 0.7778,
+      "errors": [],
+      "sample_tests": [
+        {
+          "title": "ทดสอบการเพิ่มสินค้าลงในตะกร้า",
+          "expected_outcome": "สินค้าควรจะถูกเพิ่มลงในตะกร้าและแสดงข้อความแจ้งเตือนว่า 'Added to cart'",
+          "concrete": true,
+          "reason": "concrete:แจ้งเตือน"
+        },
+        {
+          "title": "ตรวจสอบการคลิกปุ่ม 'Shopping cart'",
+          "expected_outcome": "ควรนำผู้ใช้ไปยังหน้า https://www.saucedemo.com/cart.html และแสดงรายการสินค้าในตะกร้าของผู้ใช้",
+          "concrete": true,
+          "reason": "specific-url"
+        },
+        {
+          "title": "ทดสอบการคลิกปุ่ม 'Open Menu'",
+          "expected_outcome": "เมนูจะแสดงขึ้นมาในหน้าจอ",
+          "concrete": false,
+          "reason": "generic"
+        },
+        {
+          "title": "กรอกข้อมูลผิดใน combobox \"Sort\"",
+          "expected_outcome": "ควรแสดง error message ระบุว่าข้อมูลไม่ถูกต้อง",
+          "concrete": true,
+          "reason": "concrete:error"
+        }
+      ]
+    },
+    {
+      "page_id": "saucedemo_cart",
+      "site": "saucedemo",
+      "url": "https://www.saucedemo.com/cart.html",
+      "elapsed_s": 57.9,
+      "llm_calls": 7,
+      "llm_calls_valid": 7,
+      "n_llm_tests": 7,
+      "n_rule_tests": 5,
+      "n_concrete_llm": 7,
+      "n_concrete_rule": 5,
+      "expected_test_count": 5,
+      "n_scenarios": 3,
+      "covered_scenarios_llm": [
+        "checkout_proceeds",
+        "continue_back",
+        "remove_item"
+      ],
+      "covered_scenarios_all": [
+        "checkout_proceeds",
+        "continue_back",
+        "remove_item"
+      ],
+      "page_json_valid_rate": 1.0,
+      "page_coverage_llm": 1.0,
+      "page_assertion_quality": 1.0,
+      "errors": [],
+      "sample_tests": [
+        {
+          "title": "ทดสอบการคลิกปุ่ม 'Continue Shopping'",
+          "expected_outcome": "ควรนำผู้ใช้ไปยังหน้า https://www.saucedemo.com/inventory.html และไม่มีการเกี่ยวข้องกับการ login",
+          "concrete": true,
+          "reason": "specific-url"
+        },
+        {
+          "title": "ทดสอบการลบสินค้าจากตะกร้า",
+          "expected_outcome": "สินค้าควรถูกลบออกจากตะกร้าและไม่มีอยู่ในรายการของตะกร้าอีกแล้ว",
+          "concrete": true,
+          "reason": "concrete:ตะกร้า"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างในฟิลด์ที่จำเป็น → validation error",
+          "expected_outcome": "ควรแสดง error message ที่ระบุว่าข้อมูลบางอย่างไม่ถูกต้องหรือว่าง",
+          "concrete": true,
+          "reason": "concrete:error"
+        },
+        {
+          "title": "ลบสินค้าจากตะกร้าโดยไม่มีการเลือกสินค้า",
+          "expected_outcome": "ควรแสดงข้อความ error หรือ validation error ระบุว่าไม่มีสินค้าที่เลือกในตะกร้าเพื่อทำการลบ",
+          "concrete": true,
+          "reason": "concrete:error"
+        }
+      ]
+    },
+    {
+      "page_id": "saucedemo_checkout_info",
+      "site": "saucedemo",
+      "url": "https://www.saucedemo.com/checkout-step-one.html",
+      "elapsed_s": 61.5,
+      "llm_calls": 9,
+      "llm_calls_valid": 8,
+      "n_llm_tests": 8,
+      "n_rule_tests": 7,
+      "n_concrete_llm": 5,
+      "n_concrete_rule": 7,
+      "expected_test_count": 6,
+      "n_scenarios": 4,
+      "covered_scenarios_llm": [
+        "all_filled_proceeds",
+        "empty_first_name",
+        "empty_zip",
+        "cancel_returns"
+      ],
+      "covered_scenarios_all": [
+        "all_filled_proceeds",
+        "empty_first_name",
+        "empty_zip",
+        "cancel_returns"
+      ],
+      "page_json_valid_rate": 0.8889,
+      "page_coverage_llm": 1.0,
+      "page_assertion_quality": 0.625,
+      "errors": [
+        "StructuredGenerationError('Structured generation failed [hash=d46dd431]: <failed_attempts>\\n\\n<generation number=\"1\">\\n<exception>\\n    1 validation error for _FuncResponse\\ntest_cases.0.expected_outc"
+      ],
+      "sample_tests": [
+        {
+          "title": "กรอกข้อมูล Last Name ในหน้า Checkout Step One",
+          "expected_outcome": "ข้อมูล Last Name ถูกกรอกเป็น 'Doe' และสามารถไปยังหน้า Checkout Step Two ได้",
+          "concrete": false,
+          "reason": "no-concrete-signal"
+        },
+        {
+          "title": "ตรวจสอบการกรอกข้อมูล Zip/Postal Code",
+          "expected_outcome": "ข้อมูล Zip/Postal Code ควรถูกแสดงในหน้า checkout-step-one.html และสามารถดำเนินการต่อได้",
+          "concrete": false,
+          "reason": "no-concrete-signal"
+        },
+        {
+          "title": "ตรวจสอบการคลิกปุ่ม 'Continue' ในหน้า checkout-step-one",
+          "expected_outcome": "ควรนำผู้ใช้ไปยังหน้า checkout-step-two.html",
+          "concrete": false,
+          "reason": "no-concrete-signal"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน textbox \"First Name\"",
+          "expected_outcome": "ควรแสดง error message ว่า \"first name is required\"",
+          "concrete": true,
+          "reason": "concrete:error"
+        }
+      ]
+    },
+    {
+      "page_id": "theinternet_login",
+      "site": "the-internet",
+      "url": "https://the-internet.herokuapp.com/login",
+      "elapsed_s": 43.4,
+      "llm_calls": 7,
+      "llm_calls_valid": 7,
+      "n_llm_tests": 7,
+      "n_rule_tests": 7,
+      "n_concrete_llm": 6,
+      "n_concrete_rule": 7,
+      "expected_test_count": 5,
+      "n_scenarios": 4,
+      "covered_scenarios_llm": [
+        "valid_login",
+        "invalid_username",
+        "invalid_password",
+        "logout"
+      ],
+      "covered_scenarios_all": [
+        "valid_login",
+        "invalid_username",
+        "invalid_password",
+        "logout"
+      ],
+      "page_json_valid_rate": 1.0,
+      "page_coverage_llm": 1.0,
+      "page_assertion_quality": 0.8571,
+      "errors": [],
+      "sample_tests": [
+        {
+          "title": "ทดสอบการกรอกข้อมูลใน textbox 'Password'",
+          "expected_outcome": "ข้อมูล 'password123' ควรจะถูกแสดงใน textbox 'Password'",
+          "concrete": false,
+          "reason": "no-concrete-signal"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน textbox Username",
+          "expected_outcome": "ควรแสดง error message ว่า 'Username is required'",
+          "concrete": true,
+          "reason": "concrete:error"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน textbox Password",
+          "expected_outcome": "ควรแสดง error message ว่า 'Password is required'",
+          "concrete": true,
+          "reason": "concrete:error"
+        },
+        {
+          "title": "ทดสอบการกรอกข้อมูลผิด/ว่างในช่อง Username และ Password",
+          "expected_outcome": "ควรแสดงข้อความ validation error ว่า 'Username is required' และ 'Password is required'",
+          "concrete": true,
+          "reason": "concrete:error"
+        }
+      ]
+    },
+    {
+      "page_id": "theinternet_dropdown",
+      "site": "the-internet",
+      "url": "https://the-internet.herokuapp.com/dropdown",
+      "elapsed_s": 29.3,
+      "llm_calls": 3,
+      "llm_calls_valid": 3,
+      "n_llm_tests": 3,
+      "n_rule_tests": 5,
+      "n_concrete_llm": 3,
+      "n_concrete_rule": 5,
+      "expected_test_count": 3,
+      "n_scenarios": 2,
+      "covered_scenarios_llm": [
+        "select_option1"
+      ],
+      "covered_scenarios_all": [
+        "select_option1"
+      ],
+      "page_json_valid_rate": 1.0,
+      "page_coverage_llm": 0.5,
+      "page_assertion_quality": 1.0,
+      "errors": [],
+      "sample_tests": [
+        {
+          "title": "กรอกข้อมูลผิดใน combobox",
+          "expected_outcome": "ควรแสดง error message ระบุว่าข้อมูลไม่ถูกต้อง",
+          "concrete": true,
+          "reason": "concrete:error"
+        },
+        {
+          "title": "ทดสอบ Dropdown ใน empty state",
+          "expected_outcome": "Dropdown ควรถูกแสดงและมีข้อมูลอยู่ใน empty state",
+          "concrete": true,
+          "reason": "concrete:http"
+        },
+        {
+          "title": "ทดสอบการเลือกตัวเลือกใน combobox Dropdown",
+          "expected_outcome": "ตัวเลือกที่เลือกจะถูกแสดงและสามารถใช้งานได้ตามปกติ",
+          "concrete": true,
+          "reason": "concrete:http"
+        }
+      ]
+    },
+    {
+      "page_id": "theinternet_checkboxes",
+      "site": "the-internet",
+      "url": "https://the-internet.herokuapp.com/checkboxes",
+      "elapsed_s": 34.2,
+      "llm_calls": 3,
+      "llm_calls_valid": 3,
+      "n_llm_tests": 3,
+      "n_rule_tests": 5,
+      "n_concrete_llm": 3,
+      "n_concrete_rule": 5,
+      "expected_test_count": 3,
+      "n_scenarios": 2,
+      "covered_scenarios_llm": [
+        "check_first"
+      ],
+      "covered_scenarios_all": [
+        "check_first"
+      ],
+      "page_json_valid_rate": 1.0,
+      "page_coverage_llm": 0.5,
+      "page_assertion_quality": 1.0,
+      "errors": [],
+      "sample_tests": [
+        {
+          "title": "ตรวจสอบ checkbox 1",
+          "expected_outcome": "Checkbox 1 จะถูกเลือก",
+          "concrete": true,
+          "reason": "concrete:ถูกเลือก"
+        },
+        {
+          "title": "ตรวจสอบ checkbox 2",
+          "expected_outcome": "checkbox 2 จะไม่มีการเลือก",
+          "concrete": true,
+          "reason": "concrete:http"
+        },
+        {
+          "title": "ทดสอบ checkbox 1 ใน empty state",
+          "expected_outcome": "checkbox 1 และ checkbox 2 ไม่ควรถูกเลือกใน empty state",
+          "concrete": true,
+          "reason": "concrete:ถูกเลือก"
+        }
+      ]
+    },
+    {
+      "page_id": "theinternet_add_remove",
+      "site": "the-internet",
+      "url": "https://the-internet.herokuapp.com/add_remove_elements/",
+      "elapsed_s": 33.6,
+      "llm_calls": 5,
+      "llm_calls_valid": 5,
+      "n_llm_tests": 5,
+      "n_rule_tests": 5,
+      "n_concrete_llm": 4,
+      "n_concrete_rule": 5,
+      "expected_test_count": 4,
+      "n_scenarios": 3,
+      "covered_scenarios_llm": [
+        "add_creates_delete",
+        "delete_removes"
+      ],
+      "covered_scenarios_all": [
+        "add_creates_delete",
+        "delete_removes",
+        "add_many"
+      ],
+      "page_json_valid_rate": 1.0,
+      "page_coverage_llm": 0.6667,
+      "page_assertion_quality": 0.8,
+      "errors": [],
+      "sample_tests": [
+        {
+          "title": "ทดสอบการเพิ่มปุ่ม 'Add Element'",
+          "expected_outcome": "ควรจะเห็นปุ่ม 'Delete' ที่สามารถใช้ในการลบปุ่มที่เพิ่มเข้ามา",
+          "concrete": true,
+          "reason": "concrete:เพิ่มขึ้น"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่าง → validation error",
+          "expected_outcome": "ควรแสดงข้อความ validation error ที่ระบุว่าฟิลด์ต้องมีค่า",
+          "concrete": true,
+          "reason": "concrete:error"
+        },
+        {
+          "title": "ลบ element โดยไม่มีการกรอกข้อมูล",
+          "expected_outcome": "ควรแสดง error message หรือ validation error",
+          "concrete": true,
+          "reason": "concrete:error"
+        },
+        {
+          "title": "ทดสอบ edge case ในหน้า Add/Remove Elements",
+          "expected_outcome": "ควรจะไม่มีปุ่ม 'Delete' ในหน้าและสามารถกด 'Add Element' เพื่อเพิ่มปุ่ม 'Delete'",
+          "concrete": true,
+          "reason": "concrete:http"
+        }
+      ]
+    },
+    {
+      "page_id": "parabank_login",
+      "site": "parabank",
+      "url": "https://parabank.parasoft.com/parabank/index.htm",
+      "elapsed_s": 63.8,
+      "llm_calls": 9,
+      "llm_calls_valid": 9,
+      "n_llm_tests": 9,
+      "n_rule_tests": 5,
+      "n_concrete_llm": 9,
+      "n_concrete_rule": 5,
+      "expected_test_count": 5,
+      "n_scenarios": 4,
+      "covered_scenarios_llm": [
+        "invalid_login",
+        "empty_login",
+        "go_register"
+      ],
+      "covered_scenarios_all": [
+        "invalid_login",
+        "empty_login",
+        "go_register"
+      ],
+      "page_json_valid_rate": 1.0,
+      "page_coverage_llm": 0.75,
+      "page_assertion_quality": 1.0,
+      "errors": [],
+      "sample_tests": [
+        {
+          "title": "ตรวจสอบการกรอกข้อมูลใน textbox 'Password'",
+          "expected_outcome": "ข้อมูลใน textbox 'Password' ควรจะแสดงข้อมูลที่ถูกต้องและไม่มีข้อผิดพลาด",
+          "concrete": true,
+          "reason": "concrete:ผิดพลาด"
+        },
+        {
+          "title": "ตรวจสอบการแสดงผลหน้าหลักของ Parabank",
+          "expected_outcome": "ควรแสดงหน้า Login ของ Parabank และไม่มีข้อความหรือปุ่มที่เกี่ยวกับการ login เช่น \"click Login\" หรือ \"navigate /login\"",
+          "concrete": true,
+          "reason": "concrete:http"
+        },
+        {
+          "title": "ตรวจสอบว่าลิงค์ 'Forgot login info?' สามารถคลิกได้",
+          "expected_outcome": "ควรสามารถคลิกได้และแสดงหน้าที่ขอข้อมูลการลืมรหัสผ่าน",
+          "concrete": true,
+          "reason": "concrete:http"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน textbox Username",
+          "expected_outcome": "ควรแสดง error message ว่า \"Username is required\"",
+          "concrete": true,
+          "reason": "concrete:error"
+        }
+      ]
+    },
+    {
+      "page_id": "parabank_register",
+      "site": "parabank",
+      "url": "https://parabank.parasoft.com/parabank/register.htm",
+      "elapsed_s": 70.7,
+      "llm_calls": 10,
+      "llm_calls_valid": 10,
+      "n_llm_tests": 10,
+      "n_rule_tests": 7,
+      "n_concrete_llm": 6,
+      "n_concrete_rule": 7,
+      "expected_test_count": 7,
+      "n_scenarios": 4,
+      "covered_scenarios_llm": [
+        "password_mismatch",
+        "duplicate_username",
+        "empty_required"
+      ],
+      "covered_scenarios_all": [
+        "password_mismatch",
+        "duplicate_username",
+        "empty_required"
+      ],
+      "page_json_valid_rate": 1.0,
+      "page_coverage_llm": 0.75,
+      "page_assertion_quality": 0.6,
+      "errors": [],
+      "sample_tests": [
+        {
+          "title": "ทดสอบการกรอกชื่อใน textbox 'First Name'",
+          "expected_outcome": "ข้อมูลชื่อควรจะแสดงอยู่ใน textbox 'First Name' หลังจากกรอก",
+          "concrete": false,
+          "reason": "no-concrete-signal"
+        },
+        {
+          "title": "ทดสอบการกรอกข้อมูลในช่อง Last Name",
+          "expected_outcome": "ควรจะแสดงหน้าสำหรับการยืนยันข้อมูลและสามารถดำเนินการต่อได้",
+          "concrete": false,
+          "reason": "no-concrete-signal"
+        },
+        {
+          "title": "ทดสอบการกรอกข้อมูลในช่อง Password",
+          "expected_outcome": "ควรแสดงข้อความแจ้งเตือนว่า 'Password and Confirm Password must match'",
+          "concrete": true,
+          "reason": "concrete:แจ้งเตือน"
+        },
+        {
+          "title": "ตรวจสอบการกรอกข้อมูลใน textbox 'Confirm'",
+          "expected_outcome": "ข้อความ \"Passwords do not match\" ไม่ควรปรากฏ และสามารถดำเนินการต่อไปได้",
+          "concrete": false,
+          "reason": "no-concrete-signal"
+        }
+      ]
+    },
+    {
+      "page_id": "parabank_transfer",
+      "site": "parabank",
+      "url": "https://parabank.parasoft.com/parabank/transfer.htm",
+      "elapsed_s": 72.5,
+      "llm_calls": 8,
+      "llm_calls_valid": 8,
+      "n_llm_tests": 8,
+      "n_rule_tests": 7,
+      "n_concrete_llm": 7,
+      "n_concrete_rule": 7,
+      "expected_test_count": 5,
+      "n_scenarios": 3,
+      "covered_scenarios_llm": [
+        "balance_changes",
+        "invalid_amount"
+      ],
+      "covered_scenarios_all": [
+        "balance_changes",
+        "invalid_amount"
+      ],
+      "page_json_valid_rate": 1.0,
+      "page_coverage_llm": 0.6667,
+      "page_assertion_quality": 0.875,
+      "errors": [],
+      "sample_tests": [
+        {
+          "title": "ทดสอบการกรอกจำนวนเงินใน textbox 'Amount'",
+          "expected_outcome": "ข้อมูลจำนวนเงินควรแสดงอย่างถูกต้องใน textbox และไม่ควรมีข้อผิดพลาดหรือแจ้งเตือนใดๆ",
+          "concrete": true,
+          "reason": "concrete:ผิดพลาด"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน textbox \"Amount\"",
+          "expected_outcome": "ควรแสดง error message ระบุว่า \"Amount\" เป็น必填字段 และไม่สามารถเป็นค่าว่างหรือข้อมูลที่ไม่ถูกต้องได้",
+          "concrete": true,
+          "reason": "concrete:error"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน combobox 'From account'",
+          "expected_outcome": "ควรแสดง error message ที่ระบุว่าต้องเลือกบัญชีจาก",
+          "concrete": true,
+          "reason": "concrete:error"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน combobox 'To account'",
+          "expected_outcome": "ควรแสดง error message ที่ระบุว่าต้องกรอกข้อมูลใน combobox 'To account'",
+          "concrete": true,
+          "reason": "concrete:error"
+        }
+      ]
+    },
+    {
+      "page_id": "parabank_billpay",
+      "site": "parabank",
+      "url": "https://parabank.parasoft.com/parabank/billpay.htm",
+      "elapsed_s": 79.7,
+      "llm_calls": 9,
+      "llm_calls_valid": 9,
+      "n_llm_tests": 9,
+      "n_rule_tests": 7,
+      "n_concrete_llm": 8,
+      "n_concrete_rule": 7,
+      "expected_test_count": 6,
+      "n_scenarios": 4,
+      "covered_scenarios_llm": [
+        "valid_payment",
+        "account_mismatch",
+        "invalid_amount",
+        "empty_required"
+      ],
+      "covered_scenarios_all": [
+        "valid_payment",
+        "account_mismatch",
+        "invalid_amount",
+        "empty_required"
+      ],
+      "page_json_valid_rate": 1.0,
+      "page_coverage_llm": 1.0,
+      "page_assertion_quality": 0.8889,
+      "errors": [],
+      "sample_tests": [
+        {
+          "title": "ตรวจสอบการกรอกข้อมูลใน textbox 'Account'",
+          "expected_outcome": "ข้อมูลใน textbox 'Account' ควรจะแสดงอยู่ในหน้าและไม่ควรมีข้อผิดพลาดหรือแจ้งเตือนเกี่ยวกับการกรอกข้อมูล",
+          "concrete": true,
+          "reason": "concrete:ผิดพลาด"
+        },
+        {
+          "title": "ตรวจสอบการกรอกจำนวนเงินใน textbox 'Amount'",
+          "expected_outcome": "ข้อมูลใน textbox 'Amount' ควรจะถูกแสดงและสามารถแก้ไขได้",
+          "concrete": true,
+          "reason": "concrete:จำนวน"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน textbox 'Payee Name'",
+          "expected_outcome": "ควรแสดง error message ว่า 'The Payee Name is required.'",
+          "concrete": true,
+          "reason": "concrete:error"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน textbox 'Account'",
+          "expected_outcome": "ควรแสดง error message ว่า 'The Account Number is required.' และไม่สามารถส่งการชำระเงินได้",
+          "concrete": true,
+          "reason": "concrete:error"
+        }
+      ]
+    },
+    {
+      "page_id": "demoqa_textbox",
+      "site": "demoqa",
+      "url": "https://demoqa.com/text-box",
+      "elapsed_s": 54.0,
+      "llm_calls": 8,
+      "llm_calls_valid": 8,
+      "n_llm_tests": 8,
+      "n_rule_tests": 7,
+      "n_concrete_llm": 7,
+      "n_concrete_rule": 7,
+      "expected_test_count": 5,
+      "n_scenarios": 3,
+      "covered_scenarios_llm": [
+        "invalid_email",
+        "empty_submit"
+      ],
+      "covered_scenarios_all": [
+        "invalid_email",
+        "empty_submit"
+      ],
+      "page_json_valid_rate": 1.0,
+      "page_coverage_llm": 0.6667,
+      "page_assertion_quality": 0.875,
+      "errors": [],
+      "sample_tests": [
+        {
+          "title": "ทดสอบการกรอกข้อมูลในช่อง Full Name",
+          "expected_outcome": "ข้อมูล 'John Doe' ควรจะแสดงในช่อง 'Full Name'",
+          "concrete": true,
+          "reason": "concrete:http"
+        },
+        {
+          "title": "ทดสอบการกรอกข้อมูลใน textbox 'Current Address'",
+          "expected_outcome": "ข้อมูลใน textbox 'Current Address' ควรมีค่าเป็น '123 Main St, Anytown, USA'",
+          "concrete": true,
+          "reason": "concrete:http"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน textbox Full Name",
+          "expected_outcome": "ควรแสดง error message ว่า 'This field is required'",
+          "concrete": true,
+          "reason": "concrete:error"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน textbox Email",
+          "expected_outcome": "ควรแสดง error message ระบุว่า field Email เป็น必填และต้องเป็นอีเมลที่ถูกต้อง",
+          "concrete": true,
+          "reason": "concrete:error"
+        }
+      ]
+    },
+    {
+      "page_id": "demoqa_practice_form",
+      "site": "demoqa",
+      "url": "https://demoqa.com/automation-practice-form",
+      "elapsed_s": 72.6,
+      "llm_calls": 8,
+      "llm_calls_valid": 8,
+      "n_llm_tests": 8,
+      "n_rule_tests": 7,
+      "n_concrete_llm": 7,
+      "n_concrete_rule": 7,
+      "expected_test_count": 6,
+      "n_scenarios": 3,
+      "covered_scenarios_llm": [
+        "missing_required",
+        "invalid_mobile"
+      ],
+      "covered_scenarios_all": [
+        "missing_required",
+        "invalid_mobile"
+      ],
+      "page_json_valid_rate": 1.0,
+      "page_coverage_llm": 0.6667,
+      "page_assertion_quality": 0.875,
+      "errors": [],
+      "sample_tests": [
+        {
+          "title": "ทดสอบการกรอกชื่อใน textbox 'First Name'",
+          "expected_outcome": "ข้อมูลชื่อควรจะแสดงอยู่ใน textbox 'First Name' หลังจากกรอก",
+          "concrete": true,
+          "reason": "concrete:http"
+        },
+        {
+          "title": "ทดสอบการกรอกข้อมูลใน textbox 'Last Name'",
+          "expected_outcome": "ข้อมูลใน textbox 'Last Name' ควรถูกกรอกและแสดงอย่างถูกต้อง",
+          "concrete": false,
+          "reason": "no-concrete-signal"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน textbox \"First Name\"",
+          "expected_outcome": "ควรแสดง error message ระบุว่า field \"First Name\" เป็น必填",
+          "concrete": true,
+          "reason": "concrete:error"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน textbox 'Last Name'",
+          "expected_outcome": "ควรแสดง error message ระบุว่า 'Last Name' เป็น必填字段",
+          "concrete": true,
+          "reason": "concrete:error"
+        }
+      ]
+    },
+    {
+      "page_id": "demoqa_webtables",
+      "site": "demoqa",
+      "url": "https://demoqa.com/webtables",
+      "elapsed_s": 60.6,
+      "llm_calls": 8,
+      "llm_calls_valid": 8,
+      "n_llm_tests": 8,
+      "n_rule_tests": 8,
+      "n_concrete_llm": 6,
+      "n_concrete_rule": 8,
+      "expected_test_count": 6,
+      "n_scenarios": 4,
+      "covered_scenarios_llm": [
+        "search_filters",
+        "delete_row",
+        "edit_row"
+      ],
+      "covered_scenarios_all": [
+        "search_filters",
+        "delete_row",
+        "edit_row"
+      ],
+      "page_json_valid_rate": 1.0,
+      "page_coverage_llm": 0.75,
+      "page_assertion_quality": 0.75,
+      "errors": [],
+      "sample_tests": [
+        {
+          "title": "ทดสอบการกรอกข้อมูลผิด/ว่างในฟิลด์ชื่อ",
+          "expected_outcome": "ควรแสดงข้อความ validation error ที่ระบุว่าข้อมูลไม่ถูกต้อง",
+          "concrete": true,
+          "reason": "concrete:error"
+        },
+        {
+          "title": "กรอกข้อมูลผิดใน searchbox",
+          "expected_outcome": "ควรแสดง error message ว่า 'No records found'",
+          "concrete": true,
+          "reason": "concrete:error"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างในฟิลด์ชื่อ",
+          "expected_outcome": "ควรแสดงข้อความ validation error ที่ระบุข้อมูลชื่อไม่ถูกต้อง",
+          "concrete": true,
+          "reason": "concrete:error"
+        },
+        {
+          "title": "ทดสอบ edge case สำหรับหน้า Web Tables",
+          "expected_outcome": "หน้า Web Tables ควรกลับมาอยู่ในสถานะ empty state โดยไม่มีข้อมูลใดๆ และไม่มีข้อความ error แสดงขึ้น",
+          "concrete": true,
+          "reason": "concrete:error"
+        }
+      ]
+    },
+    {
+      "page_id": "orangehrm_login",
+      "site": "orangehrm",
+      "url": "https://opensource-demo.orangehrmlive.com/web/index.php/auth/login",
+      "elapsed_s": 642.1,
+      "llm_calls": 7,
+      "llm_calls_valid": 7,
+      "n_llm_tests": 7,
+      "n_rule_tests": 5,
+      "n_concrete_llm": 7,
+      "n_concrete_rule": 5,
+      "expected_test_count": 5,
+      "n_scenarios": 3,
+      "covered_scenarios_llm": [
+        "valid_login",
+        "invalid_login",
+        "empty_required"
+      ],
+      "covered_scenarios_all": [
+        "valid_login",
+        "invalid_login",
+        "empty_required"
+      ],
+      "page_json_valid_rate": 1.0,
+      "page_coverage_llm": 1.0,
+      "page_assertion_quality": 1.0,
+      "errors": [],
+      "sample_tests": [
+        {
+          "title": "ทดสอบการกรอกข้อมูลในช่อง Password",
+          "expected_outcome": "ข้อมูล 'admin123' จะถูกแสดงในช่อง Password และสามารถใช้เพื่อเข้าสู่ระบบได้",
+          "concrete": true,
+          "reason": "concrete:เข้าสู่ระบบ"
+        },
+        {
+          "title": "ทดสอบการคลิกปุ่ม Login",
+          "expected_outcome": "ควรนำผู้ใช้ไปยังหน้า Dashboard",
+          "concrete": true,
+          "reason": "concrete:dashboard"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน textbox Username",
+          "expected_outcome": "ควรแสดง error message ว่า 'Invalid username'",
+          "concrete": true,
+          "reason": "concrete:error"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน textbox Password",
+          "expected_outcome": "ควรแสดง error message ว่า 'Invalid credentials'",
+          "concrete": true,
+          "reason": "concrete:error"
+        }
+      ]
+    },
+    {
+      "page_id": "automationexercise_signup",
+      "site": "automationexercise",
+      "url": "https://automationexercise.com/login",
+      "elapsed_s": 72.8,
+      "llm_calls": 10,
+      "llm_calls_valid": 10,
+      "n_llm_tests": 10,
+      "n_rule_tests": 5,
+      "n_concrete_llm": 9,
+      "n_concrete_rule": 5,
+      "expected_test_count": 6,
+      "n_scenarios": 3,
+      "covered_scenarios_llm": [
+        "valid_signup",
+        "existing_email",
+        "invalid_login"
+      ],
+      "covered_scenarios_all": [
+        "valid_signup",
+        "existing_email",
+        "invalid_login"
+      ],
+      "page_json_valid_rate": 1.0,
+      "page_coverage_llm": 1.0,
+      "page_assertion_quality": 0.9,
+      "errors": [],
+      "sample_tests": [
+        {
+          "title": "ทดสอบการกรอกข้อมูลใน textbox 'Signup Name'",
+          "expected_outcome": "ควรแสดงหน้าการกรอกข้อมูลเพิ่มเติมสำหรับการสมัครสมาชิกและไม่มีข้อผิดพลาดใดๆ ที่เกิดขึ้น",
+          "concrete": true,
+          "reason": "concrete:ผิดพลาด"
+        },
+        {
+          "title": "ทดสอบการกรอกอีเมลใน textbox 'Login Email'",
+          "expected_outcome": "ข้อความที่กรอกจะแสดงอยู่ใน textbox 'Login Email' และไม่มีข้อผิดพลาดหรือแจ้งเตือน",
+          "concrete": true,
+          "reason": "concrete:ผิดพลาด"
+        },
+        {
+          "title": "ทดสอบการกรอกข้อมูลในช่อง 'Login Password'",
+          "expected_outcome": "ควรจะสามารถเข้าสู่ระบบได้สำเร็จ",
+          "concrete": true,
+          "reason": "concrete:เข้าสู่ระบบ"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน textbox 'Signup Name'",
+          "expected_outcome": "ควรแสดง error message ระบุว่า 'Name is required'",
+          "concrete": true,
+          "reason": "concrete:error"
+        }
+      ]
+    },
+    {
+      "page_id": "automationexercise_contact",
+      "site": "automationexercise",
+      "url": "https://automationexercise.com/contact_us",
+      "elapsed_s": 75.7,
+      "llm_calls": 9,
+      "llm_calls_valid": 9,
+      "n_llm_tests": 9,
+      "n_rule_tests": 7,
+      "n_concrete_llm": 9,
+      "n_concrete_rule": 7,
+      "expected_test_count": 5,
+      "n_scenarios": 3,
+      "covered_scenarios_llm": [
+        "invalid_email",
+        "empty_required"
+      ],
+      "covered_scenarios_all": [
+        "invalid_email",
+        "empty_required"
+      ],
+      "page_json_valid_rate": 1.0,
+      "page_coverage_llm": 0.6667,
+      "page_assertion_quality": 1.0,
+      "errors": [],
+      "sample_tests": [
+        {
+          "title": "ทดสอบการกรอกข้อมูลใน textbox \"Name\"",
+          "expected_outcome": "ข้อมูลใน textbox \"Name\" ควรถูกกรอกเป็น \"John Doe\" และไม่มีข้อผิดพลาดใดๆ",
+          "concrete": true,
+          "reason": "concrete:ผิดพลาด"
+        },
+        {
+          "title": "ทดสอบการกรอกข้อมูลใน textbox \"Subject\"",
+          "expected_outcome": "ข้อความ \"สอบถามเรื่องการส่งสินค้า\" ควรจะแสดงอยู่ใน textbox \"Subject\" และไม่มีข้อผิดพลาดใดๆ",
+          "concrete": true,
+          "reason": "concrete:ผิดพลาด"
+        },
+        {
+          "title": "ทดสอบการกรอกข้อความใน textbox \"Message\"",
+          "expected_outcome": "ข้อความ \"Hello, this is a test message\" จะแสดงอยู่ใน textbox \"Message\" และไม่มีข้อผิดพลาดใดๆ บนหน้าเว็บไซต์",
+          "concrete": true,
+          "reason": "concrete:ผิดพลาด"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน textbox 'Name'",
+          "expected_outcome": "ควรแสดง error message ระบุว่า field 'Name' เป็น必填",
+          "concrete": true,
+          "reason": "concrete:error"
+        }
+      ]
+    },
+    {
+      "page_id": "habsida_login",
+      "site": "habsida-realworld",
+      "url": "https://realworld.habsida.net/login",
+      "elapsed_s": 66.2,
+      "llm_calls": 7,
+      "llm_calls_valid": 7,
+      "n_llm_tests": 7,
+      "n_rule_tests": 5,
+      "n_concrete_llm": 6,
+      "n_concrete_rule": 5,
+      "expected_test_count": 5,
+      "n_scenarios": 3,
+      "covered_scenarios_llm": [
+        "invalid_login",
+        "empty_login"
+      ],
+      "covered_scenarios_all": [
+        "invalid_login",
+        "empty_login"
+      ],
+      "page_json_valid_rate": 1.0,
+      "page_coverage_llm": 0.6667,
+      "page_assertion_quality": 0.8571,
+      "errors": [],
+      "sample_tests": [
+        {
+          "title": "ทดสอบการกรอกข้อมูลใน textbox 'Password'",
+          "expected_outcome": "ข้อมูล 'password123' ควรจะแสดงใน textbox 'Password'",
+          "concrete": false,
+          "reason": "no-concrete-signal"
+        },
+        {
+          "title": "ทดสอบการคลิกปุ่ม 'Sign in'",
+          "expected_outcome": "ควรนำผู้ใช้ไปยังหน้าเว็บ https://realworld.habsida.net/",
+          "concrete": true,
+          "reason": "specific-url"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน textbox Email",
+          "expected_outcome": "ควรแสดง error message ว่า 'The email field is required'",
+          "concrete": true,
+          "reason": "concrete:error"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน textbox Password",
+          "expected_outcome": "ควรแสดง error message ระบุว่า 'Password' เป็น必填字段 และ/หรือ ข้อมูลที่กรอกไม่ถูกต้อง",
+          "concrete": true,
+          "reason": "concrete:error"
+        }
+      ]
+    },
+    {
+      "page_id": "habsida_register",
+      "site": "habsida-realworld",
+      "url": "https://realworld.habsida.net/register",
+      "elapsed_s": 101.9,
+      "llm_calls": 8,
+      "llm_calls_valid": 8,
+      "n_llm_tests": 8,
+      "n_rule_tests": 5,
+      "n_concrete_llm": 7,
+      "n_concrete_rule": 5,
+      "expected_test_count": 5,
+      "n_scenarios": 3,
+      "covered_scenarios_llm": [
+        "invalid_email"
+      ],
+      "covered_scenarios_all": [
+        "invalid_email"
+      ],
+      "page_json_valid_rate": 1.0,
+      "page_coverage_llm": 0.3333,
+      "page_assertion_quality": 0.875,
+      "errors": [],
+      "sample_tests": [
+        {
+          "title": "ตรวจสอบการกรอกข้อมูลใน textbox 'Password'",
+          "expected_outcome": "ข้อมูล 'password123' ควรจะแสดงใน textbox 'Password'",
+          "concrete": false,
+          "reason": "no-concrete-signal"
+        },
+        {
+          "title": "คลิกปุ่ม \"Sign up\" เพื่อไปยังหน้าหลัก",
+          "expected_outcome": "ผู้ใช้สามารถคลิกปุ่ม \"Sign up\" และถูกนำไปยังหน้าหลักของเว็บไซต์",
+          "concrete": true,
+          "reason": "concrete:http"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน textbox Username",
+          "expected_outcome": "ควรแสดง error message ว่า 'Username is required'",
+          "concrete": true,
+          "reason": "concrete:error"
+        },
+        {
+          "title": "กรอกข้อมูลผิด/ว่างใน textbox Email",
+          "expected_outcome": "ควรแสดง error message ระบุว่า field \"Email\" เป็น必填",
+          "concrete": true,
+          "reason": "concrete:error"
+        }
+      ]
+    }
+  ]
+}
