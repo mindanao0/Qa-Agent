@@ -31,6 +31,21 @@ class _FuncResponse(BaseModel):
     test_cases: list[_FuncItem]
 
 
+def _make_structured_client():
+    """Select the planner's structured client from config (eval Phase 1).
+
+    "grammar" -> GrammarConstrainedClient (Ollama format=<schema> constrained
+    decoding); anything else -> the production InstructorClient. Scoped to the
+    test planner via get_test_planner_engine() so other LLM consumers are
+    unaffected.
+    """
+    from src.config_loader import get_test_planner_engine
+    if get_test_planner_engine() == "grammar":
+        from src.llm.grammar_client import GrammarConstrainedClient
+        return GrammarConstrainedClient()
+    return InstructorClient()
+
+
 class UniversalTestPlanner:
     """Generates TestCase list from SFGStore nodes.
 
@@ -40,7 +55,7 @@ class UniversalTestPlanner:
     """
 
     def __init__(self) -> None:
-        self._client = InstructorClient()
+        self._client = _make_structured_client()
 
     async def plan(self, sfg_store: SFGStore, start_url: str) -> list[TestCase]:
         nodes = sfg_store.get_nodes_by_url_prefix(start_url)

@@ -49,6 +49,21 @@ def get_structured_output_engine() -> str:
     return cfg.get("llm", {}).get("structured_output_engine", "instructor")
 
 
+def get_test_planner_engine() -> str:
+    """Structured-output engine for the UniversalTestPlanner ONLY.
+
+    Scoped separately from get_structured_output_engine() so switching the test
+    planner to grammar-constrained output does not affect the healer / generator /
+    agent-planner (which branch on the global flag).
+
+    Priority: TEST_PLANNER_ENGINE env > config llm.test_planner_engine > "instructor".
+    """
+    env_override = os.getenv("TEST_PLANNER_ENGINE")
+    if env_override:
+        return env_override
+    return _load_yaml().get("llm", {}).get("test_planner_engine", "instructor")
+
+
 def get_use_grounder() -> bool:
     """Return True if the grounder perception layer is enabled in config.
 
