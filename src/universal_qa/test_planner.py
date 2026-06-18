@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.contractskill.sfg import SFGNode, SFGStore
 from src.llm.instructor_client import InstructorClient, StructuredGenerationError
 from src.universal_qa.models import TestCase
+from src.universal_qa.few_shot_examples import prepend_few_shot
 from src.universal_qa.explorer.nav_map import (
     ExploredAction, ExploredPage, NavigationFlow, NavigationMap,
 )
@@ -55,7 +56,13 @@ class UniversalTestPlanner:
     """
 
     def __init__(self) -> None:
+        from src.config_loader import get_test_planner_fewshot
         self._client = _make_structured_client()
+        self._use_fewshot = get_test_planner_fewshot()
+
+    def _fs(self, prompt: str) -> str:
+        """Prepend few-shot exemplars to a prompt when enabled (eval Phase 2)."""
+        return prepend_few_shot(prompt) if self._use_fewshot else prompt
 
     async def plan(self, sfg_store: SFGStore, start_url: str) -> list[TestCase]:
         nodes = sfg_store.get_nodes_by_url_prefix(start_url)
@@ -98,7 +105,7 @@ class UniversalTestPlanner:
             )
             try:
                 response: _FuncResponse = await self._client.create_structured(
-                    prompt, _FuncResponse, temperature=0.1
+                    self._fs(prompt), _FuncResponse, temperature=0.1
                 )
                 for item in response.test_cases:
                     results.append(TestCase(
@@ -353,7 +360,7 @@ class UniversalTestPlanner:
                 )
                 try:
                     resp: _FuncResponse = await self._client.create_structured(
-                        prompt, _FuncResponse, temperature=0.1
+                        self._fs(prompt), _FuncResponse, temperature=0.1
                     )
                     for item in resp.test_cases[:1]:
                         results.append(TestCase(
@@ -413,7 +420,7 @@ class UniversalTestPlanner:
                 )
                 try:
                     resp = await self._client.create_structured(
-                        prompt, _FuncResponse, temperature=0.1
+                        self._fs(prompt), _FuncResponse, temperature=0.1
                     )
                     for item in resp.test_cases[:1]:
                         results.append(TestCase(
@@ -451,7 +458,7 @@ class UniversalTestPlanner:
             )
             try:
                 resp = await self._client.create_structured(
-                    prompt, _FuncResponse, temperature=0.1
+                    self._fs(prompt), _FuncResponse, temperature=0.1
                 )
                 for item in resp.test_cases[:1]:
                     results.append(TestCase(

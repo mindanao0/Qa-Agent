@@ -64,6 +64,24 @@ def get_test_planner_engine() -> str:
     return _load_yaml().get("llm", {}).get("test_planner_engine", "instructor")
 
 
+def _planner_flag(env_key: str, cfg_key: str, default: bool = False) -> bool:
+    """Bool flag with env override > config llm.<cfg_key> > default."""
+    v = os.getenv(env_key)
+    if v is not None:
+        return v.lower() in ("1", "true", "yes", "on")
+    return bool(_load_yaml().get("llm", {}).get(cfg_key, default))
+
+
+def get_test_planner_fewshot() -> bool:
+    """Few-shot exemplars in the UniversalTestPlanner prompts (eval Phase 2)."""
+    return _planner_flag("TEST_PLANNER_FEWSHOT", "test_planner_fewshot")
+
+
+def get_test_planner_rag() -> bool:
+    """RAG reference injection in the UniversalTestPlanner prompts (eval Phase 3)."""
+    return _planner_flag("TEST_PLANNER_RAG", "test_planner_rag")
+
+
 def get_use_grounder() -> bool:
     """Return True if the grounder perception layer is enabled in config.
 

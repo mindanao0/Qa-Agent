@@ -185,9 +185,10 @@ def build_client(mode: str):
         from src.llm.grammar_client import GrammarConstrainedClient  # added in Phase 1
         return RecordingClient(GrammarConstrainedClient())
     if mode in ("fewshot", "rag"):
-        # Phases 2/3 change the PLANNER (prompts / retrieval); client stays first-pass.
-        from src.llm.instructor_client import InstructorClient
-        return RecordingClient(InstructorClient(max_retries=1))
+        # Phases 2/3 are CUMULATIVE on top of grammar (Phase 1 adopted): grammar
+        # client + few-shot / RAG planner changes (toggled via env in run()).
+        from src.llm.grammar_client import GrammarConstrainedClient
+        return RecordingClient(GrammarConstrainedClient())
     raise ValueError(f"unknown mode: {mode}")
 
 
@@ -281,6 +282,12 @@ async def eval_page(page: dict, mode: str) -> dict:
 
 
 async def run(golden_path: Path, mode: str, label: str, limit: int | None) -> dict:
+    import os
+    # Cumulative phases: fewshot = grammar + few-shot; rag = grammar + few-shot + RAG.
+    # Set explicitly (not relying on config) so eval modes are deterministic.
+    os.environ["TEST_PLANNER_FEWSHOT"] = "1" if mode in ("fewshot", "rag") else "0"
+    os.environ["TEST_PLANNER_RAG"] = "1" if mode == "rag" else "0"
+
     pages = [json.loads(l) for l in golden_path.read_text(encoding="utf-8").splitlines() if l.strip()]
     if limit:
         pages = pages[:limit]

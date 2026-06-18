@@ -12,6 +12,7 @@ llm:
   retry_max_wait_sec: 10
   structured_output_engine: "instructor"   # "instructor" | "legacy_repair"
   test_planner_engine: "grammar"   # UniversalTestPlanner ONLY: "instructor" | "grammar" (eval Phase 1: grammar-constrained Ollama format=schema)
+  test_planner_fewshot: true   # UniversalTestPlanner ONLY: few-shot exemplars in prompts (eval Phase 2: +coverage, fixes grammar truncation)
   bft:
     enabled: false
     deferred_reason: "7B model + max_retries=1 → T>0 generators fail schema"

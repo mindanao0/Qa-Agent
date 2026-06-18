@@ -39,6 +39,26 @@
         "total_scenarios": 68,
         "total_eval_seconds": 1885.5
       }
+    },
+    {
+      "label": "+few-shot",
+      "metrics": {
+        "json_valid_rate": 1.0,
+        "coverage_score": 0.8883,
+        "assertion_quality": 0.9205
+      },
+      "diagnostics": {
+        "total_llm_calls": 151,
+        "total_llm_calls_valid": 151,
+        "total_llm_tests": 151,
+        "total_rule_tests": 121,
+        "avg_llm_tests_per_page": 7.55,
+        "scenario_coverage_micro_llm": 0.8824,
+        "scenario_coverage_micro_all": 0.8824,
+        "assertion_quality_rule_tests": 1.0,
+        "total_scenarios": 68,
+        "total_eval_seconds": 1490.2
+      }
     }
   ],
   "baseline_metrics": {
