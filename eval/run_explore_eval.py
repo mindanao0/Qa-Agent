@@ -48,6 +48,7 @@ from src.universal_qa.auth_manager import AuthManager  # noqa: E402
 from src.universal_qa.explorer.nav_map import ExplorerConfig  # noqa: E402
 from src.universal_qa.explorer.site_explorer import SiteExplorer  # noqa: E402
 from src.universal_qa.site_discovery import SiteDiscovery  # noqa: E402
+from src.universal_qa.explorer.sfg_traversal import SFGTraversalExplorer  # noqa: E402
 
 _LAUNCH_ARGS = ["--disable-dev-shm-usage", "--no-sandbox", "--disable-gpu"]
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -92,7 +93,7 @@ async def _dedup_probe(page, urls: list[str]) -> tuple[float | None, int]:
     return (stable / total if total else None), total
 
 
-async def eval_target(t: dict, headless: bool = True) -> dict:
+async def eval_target(t: dict, mode: str = "baseline", headless: bool = True) -> dict:
     res: dict = {"target_id": t["target_id"], "seed_url": t["seed_url"],
                  "expected_states_min": t["expected_states_min"]}
     t0 = time.monotonic()
@@ -110,40 +111,65 @@ async def eval_target(t: dict, headless: bool = True) -> dict:
             await page.wait_for_timeout(1_500)
 
             base = f"{urlsplit(page.url).scheme}://{urlsplit(page.url).netloc}"
-            disc = SiteDiscovery(max_pages=25)
-            sfg = await disc.discover(page, page.url)
-            disc_urls = [n.url for n in sfg.get_nodes_by_url_prefix(base)]
-            states_discovered = sfg.node_count()
+            seed = page.url
 
-            cfg = ExplorerConfig(max_pages=25, explore_timeout_min=3, max_depth=4)
-            from src.llm.instructor_client import InstructorClient
-            explorer = SiteExplorer(auth=auth, config=cfg, client=InstructorClient())
-            nav = await explorer.explore(page, disc_urls or [page.url])
-            explored_urls = [p.url for p in nav.pages]
-            state_changes = sum(1 for p in nav.pages for a in p.actions if a.state_change)
+            if mode == "sfg":
+                store = SFGStore(db_path=Path(tempfile.mkdtemp(prefix="uqa_sfg_")) / "sfg.db")
+                crawler = SFGTraversalExplorer(store, max_states=150, time_budget_s=180)
+                await crawler.explore(page, seed)
+                states_discovered = store.node_count()
+                node_urls = [n.url for n in store.get_nodes_by_url_prefix(base)]
+                all_paths = {_path(u) for u in node_urls}
+                # dedup probe with the crawler's OWN signature (re-seen state -> same id)
+                stable = total = 0
+                for u in (node_urls[:3] or [seed]):
+                    try:
+                        await page.goto(u, wait_until="domcontentloaded", timeout=20_000)
+                        await page.wait_for_timeout(500)
+                        h1 = await crawler.signature_hash(page)
+                        await page.goto(u, wait_until="domcontentloaded", timeout=20_000)
+                        await page.wait_for_timeout(500)
+                        h2 = await crawler.signature_hash(page)
+                        total += 1
+                        stable += int(h1 == h2)
+                    except Exception:  # noqa: BLE001
+                        pass
+                dedup_precision = round(stable / total, 4) if total else None
+                n_probe = total
+                diag_extra = {
+                    "edges": store.edge_count(), "clicks": crawler.click_attempts,
+                    "click_fail": crawler.click_fail, "blocked": crawler.blocked,
+                    "dedup_hits": crawler.merges, "observations": crawler.observations,
+                }
+            else:
+                disc = SiteDiscovery(max_pages=25)
+                sfg = await disc.discover(page, page.url)
+                disc_urls = [n.url for n in sfg.get_nodes_by_url_prefix(base)]
+                states_discovered = sfg.node_count()
+                cfg = ExplorerConfig(max_pages=25, explore_timeout_min=3, max_depth=4)
+                from src.llm.instructor_client import InstructorClient
+                explorer = SiteExplorer(auth=auth, config=cfg, client=InstructorClient())
+                nav = await explorer.explore(page, disc_urls or [page.url])
+                explored_urls = [p.url for p in nav.pages]
+                all_paths = {_path(u) for u in (disc_urls + explored_urls)}
+                probe_urls = (disc_urls or [page.url])[:3]
+                dedup_precision, n_probe = await _dedup_probe(page, probe_urls)
+                diag_extra = {
+                    "discovery_urls": len(disc_urls), "explored_pages": len(nav.pages),
+                    "explorer_state_changes": sum(1 for p in nav.pages for a in p.actions if a.state_change),
+                    "flows": len(nav.flows),
+                }
 
-            all_paths = {_path(u) for u in (disc_urls + explored_urls)}
             expected = t["expected_reachable_pages"]
             hits = [e for e in expected if _reached(e, all_paths)]
             reachable_coverage = round(len(hits) / len(expected), 4) if expected else None
-
-            probe_urls = (disc_urls or [page.url])[:3]
-            dedup_precision, n_probe = await _dedup_probe(page, probe_urls)
-
             res.update({
                 "states_discovered": states_discovered,
                 "reachable_coverage": reachable_coverage,
                 "dedup_precision": dedup_precision,
-                "diagnostics": {
-                    "discovery_urls": len(disc_urls),
-                    "explored_pages": len(nav.pages),
-                    "explorer_state_changes": state_changes,
-                    "flows": len(nav.flows),
-                    "expected_reachable": len(expected),
-                    "reached": hits,
-                    "dedup_probe_n": n_probe,
-                    "elapsed_s": round(time.monotonic() - t0, 1),
-                },
+                "diagnostics": {**diag_extra, "expected_reachable": len(expected),
+                                "reached": hits, "dedup_probe_n": n_probe,
+                                "elapsed_s": round(time.monotonic() - t0, 1)},
             })
         except Exception as exc:  # noqa: BLE001
             logger.error(f"{t['target_id']} FAILED: {exc!r}")
@@ -153,7 +179,7 @@ async def eval_target(t: dict, headless: bool = True) -> dict:
     return res
 
 
-async def run(golden: Path, label: str, limit: int | None, only: str | None,
+async def run(golden: Path, label: str, mode: str, limit: int | None, only: str | None,
               headless: bool) -> dict:
     targets = [json.loads(l) for l in golden.read_text(encoding="utf-8").splitlines() if l.strip()]
     if only:
@@ -163,8 +189,8 @@ async def run(golden: Path, label: str, limit: int | None, only: str | None,
 
     per = []
     for i, t in enumerate(targets, 1):
-        logger.info(f"[{i}/{len(targets)}] {t['target_id']} — {t['seed_url']}")
-        per.append(await eval_target(t, headless=headless))
+        logger.info(f"[{i}/{len(targets)}] {t['target_id']} — {t['seed_url']} (mode={mode})")
+        per.append(await eval_target(t, mode=mode, headless=headless))
 
     ok = [p for p in per if "states_discovered" in p]
     def _avg(key):
@@ -189,13 +215,14 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--golden", default=str(ROOT / "eval" / "explore_golden.jsonl"))
     ap.add_argument("--label", default="baseline")
+    ap.add_argument("--mode", default="baseline", choices=["baseline", "sfg"])
     ap.add_argument("--out", default=None)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--only", default=None)
     ap.add_argument("--headed", action="store_true")
     args = ap.parse_args()
 
-    summary = asyncio.run(run(Path(args.golden), args.label, args.limit,
+    summary = asyncio.run(run(Path(args.golden), args.label, args.mode, args.limit,
                               args.only, headless=not args.headed))
     print(json.dumps(summary["metrics"], indent=2, ensure_ascii=False))
     for p in summary["per_target"]:
