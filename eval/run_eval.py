@@ -252,6 +252,8 @@ async def eval_page(page: dict, mode: str) -> dict:
     covered_all = [s["id"] for s in scenarios if scenario_covered(s, cases)]
 
     await client.close()
+    if getattr(planner, "_retriever", None) is not None:
+        await planner._retriever.close()
 
     return {
         "page_id": page["page_id"],

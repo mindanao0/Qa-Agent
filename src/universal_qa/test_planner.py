@@ -56,13 +56,31 @@ class UniversalTestPlanner:
     """
 
     def __init__(self) -> None:
-        from src.config_loader import get_test_planner_fewshot
+        from src.config_loader import get_test_planner_fewshot, get_test_planner_rag
         self._client = _make_structured_client()
         self._use_fewshot = get_test_planner_fewshot()
+        self._use_rag = get_test_planner_rag()
+        self._retriever = None
+        if self._use_rag:
+            from src.rag.planner_examples import PlannerExampleRetriever
+            self._retriever = PlannerExampleRetriever()
 
     def _fs(self, prompt: str) -> str:
         """Prepend few-shot exemplars to a prompt when enabled (eval Phase 2)."""
         return prepend_few_shot(prompt) if self._use_fewshot else prompt
+
+    async def _augment(self, prompt: str, url: str = "", role: str = "", name: str = "") -> str:
+        """Few-shot prepend (Phase 2) + retrieved-reference prepend (Phase 3)."""
+        prompt = self._fs(prompt)
+        if self._use_rag and self._retriever is not None and name:
+            try:
+                hits = await self._retriever.retrieve(url, role or "element", name, top_k=3)
+                refs = self._retriever.format_references(hits)
+                if refs:
+                    prompt = f"{refs}\n\n{prompt}"
+            except Exception as exc:  # retrieval must never break planning
+                logger.warning(f"RAG augment failed: {exc!r}")
+        return prompt
 
     async def plan(self, sfg_store: SFGStore, start_url: str) -> list[TestCase]:
         nodes = sfg_store.get_nodes_by_url_prefix(start_url)
@@ -360,7 +378,8 @@ class UniversalTestPlanner:
                 )
                 try:
                     resp: _FuncResponse = await self._client.create_structured(
-                        self._fs(prompt), _FuncResponse, temperature=0.1
+                        await self._augment(prompt, page.url, role, name),
+                        _FuncResponse, temperature=0.1,
                     )
                     for item in resp.test_cases[:1]:
                         results.append(TestCase(
@@ -420,7 +439,8 @@ class UniversalTestPlanner:
                 )
                 try:
                     resp = await self._client.create_structured(
-                        self._fs(prompt), _FuncResponse, temperature=0.1
+                        await self._augment(prompt, page.url, role, name),
+                        _FuncResponse, temperature=0.1,
                     )
                     for item in resp.test_cases[:1]:
                         results.append(TestCase(
