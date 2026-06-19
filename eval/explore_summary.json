@@ -1,0 +1,43 @@
+{
+  "explore": [
+    {
+      "label": "baseline",
+      "states_discovered_total": 131,
+      "states_discovered_avg": 13.1,
+      "reachable_coverage": 0.6358,
+      "dedup_precision": 1.0
+    },
+    {
+      "label": "+SFG (E1)",
+      "states_discovered_total": 143,
+      "states_discovered_avg": 15.8889,
+      "reachable_coverage": 0.5907,
+      "dedup_precision": 1.0
+    },
+    {
+      "label": "+Layer1 (E2)",
+      "states_discovered_total": 119,
+      "states_discovered_avg": 11.9,
+      "reachable_coverage": 0.685,
+      "dedup_precision": 1.0
+    }
+  ],
+  "locator": [
+    {
+      "label": "E1 (no heal)",
+      "clicks": 1056,
+      "fail": 270,
+      "success_rate": 0.7443,
+      "healed_by_l1": 0,
+      "llm_call_pct": 0.0
+    },
+    {
+      "label": "E2 (Layer-1)",
+      "clicks": 564,
+      "fail": 119,
+      "success_rate": 0.789,
+      "healed_by_l1": 0,
+      "llm_call_pct": 0.0
+    }
+  ]
+}

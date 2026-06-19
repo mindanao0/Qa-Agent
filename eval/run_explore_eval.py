@@ -138,8 +138,9 @@ async def eval_target(t: dict, mode: str = "baseline", headless: bool = True) ->
                 n_probe = total
                 diag_extra = {
                     "edges": store.edge_count(), "clicks": crawler.click_attempts,
-                    "click_fail": crawler.click_fail, "blocked": crawler.blocked,
-                    "dedup_hits": crawler.merges, "observations": crawler.observations,
+                    "click_fail": crawler.click_fail, "healed_l1": crawler.healed_l1,
+                    "blocked": crawler.blocked, "dedup_hits": crawler.merges,
+                    "observations": crawler.observations,
                 }
             else:
                 disc = SiteDiscovery(max_pages=25)

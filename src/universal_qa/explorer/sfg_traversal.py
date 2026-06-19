@@ -84,6 +84,7 @@ class SFGTraversalExplorer:
         self.blocked = 0
         self.click_attempts = 0
         self.click_fail = 0
+        self.healed_l1 = 0  # clicks rescued by Layer-1 (semantic/fuzzy, no LLM)
         self.observations = 0
         self.merges = 0  # fuzzy/exact re-recognitions (dedup hits)
 
@@ -161,16 +162,72 @@ class SFGTraversalExplorer:
             return page.get_by_text(c.name).first
         return page.get_by_text(c.label).first
 
+    @staticmethod
+    def _similar(a: str, b: str) -> float:
+        a, b = (a or "").strip().lower(), (b or "").strip().lower()
+        if not a or not b:
+            return 0.0
+        try:
+            import jellyfish
+            return jellyfish.jaro_winkler_similarity(a, b)
+        except Exception:
+            import difflib
+            return difflib.SequenceMatcher(None, a, b).ratio()
+
+    def _candidate_locators(self, page: Page, c: ElementCandidate):
+        """Semantic locators in priority order: role > label > placeholder > text > test_id."""
+        name = c.name or c.label
+        if c.role and name:
+            yield page.get_by_role(c.role, name=name).first
+        if name:
+            yield page.get_by_label(name).first
+            yield page.get_by_placeholder(name).first
+            yield page.get_by_text(name).first
+            yield page.get_by_test_id(name).first
+
+    async def _fuzzy_locate(self, page: Page, c: ElementCandidate):
+        """Layer-1 heal (no LLM): Jaro-Winkler match the target name against the
+        page's real interactive-element names; click the best >= 0.85."""
+        target = (c.name or c.label or "").strip()
+        if not target:
+            return None
+        try:
+            cands = await self._scanner.scan(page)
+        except Exception:
+            return None
+        best, best_score = None, 0.0
+        for cc in cands:
+            nm = cc.name or cc.label or ""
+            s = self._similar(target, nm)
+            if s > best_score:
+                best, best_score = cc, s
+        if best is not None and best_score >= 0.85:
+            return self._locate(page, best)
+        return None
+
     async def _click(self, page: Page, c: ElementCandidate) -> bool:
         self.click_attempts += 1
-        try:
-            await self._locate(page, c).click(timeout=2_000)
-            await page.wait_for_timeout(350)
-            return True
-        except Exception as exc:
-            self.click_fail += 1
-            logger.debug(f"click '{c.label}' failed: {exc!r}")
-            return False
+        # 1) semantic locators in order (getByRole > Label > Placeholder > Text > TestId)
+        for loc in self._candidate_locators(page, c):
+            try:
+                await loc.click(timeout=1_500)
+                await page.wait_for_timeout(350)
+                return True
+            except Exception:
+                continue
+        # 2) Layer-1 fuzzy heal (no LLM)
+        healed = await self._fuzzy_locate(page, c)
+        if healed is not None:
+            try:
+                await healed.click(timeout=1_500)
+                await page.wait_for_timeout(350)
+                self.healed_l1 += 1
+                return True
+            except Exception:
+                pass
+        self.click_fail += 1
+        logger.debug(f"click '{c.label}' failed (all layers)")
+        return False
 
     async def _replay(self, page: Page, seed: str, path: list[dict]) -> bool:
         try:
@@ -259,7 +316,7 @@ class SFGTraversalExplorer:
         logger.info(
             f"SFGTraversal: states={self._store.node_count()} edges={self._store.edge_count()} "
             f"blocked={self.blocked} clicks={self.click_attempts}/fail={self.click_fail} "
-            f"obs={self.observations} dedup_hits={self.merges}"
+            f"healed_l1={self.healed_l1} obs={self.observations} dedup_hits={self.merges}"
         )
         return self._store
 
