@@ -15,10 +15,30 @@ _SCAN_JS = """
     const out = [];
     const seen = new Set();
     function describe(el, container) {
-        const role = el.getAttribute('role')
-            || ({BUTTON:'button', A:'link', INPUT:'textbox', SELECT:'combobox'})[el.tagName] || null;
+        function inferRole(el) {
+            const r = el.getAttribute('role');
+            if (r) return r;
+            const t = el.tagName;
+            if (t === 'BUTTON') return 'button';
+            if (t === 'A') return 'link';
+            if (t === 'SELECT') return 'combobox';
+            if (t === 'TEXTAREA') return 'textbox';
+            if (t === 'INPUT') {
+                const it = (el.getAttribute('type') || 'text').toLowerCase();
+                if (it === 'checkbox') return 'checkbox';
+                if (it === 'radio') return 'radio';
+                if (it === 'submit' || it === 'button' || it === 'reset') return 'button';
+                if (it === 'search') return 'searchbox';
+                return 'textbox';
+            }
+            return null;
+        }
+        const role = inferRole(el);
         const name = (el.getAttribute('aria-label')
-            || el.textContent || el.value || '').trim().slice(0, 60);
+            || el.getAttribute('placeholder')
+            || (el.labels && el.labels[0] && el.labels[0].textContent)
+            || el.textContent || el.value || el.getAttribute('name')
+            || '').trim().slice(0, 60);
         const label = name || role || el.tagName.toLowerCase();
         if (!label || seen.has(container + '|' + label)) return;
         seen.add(container + '|' + label);
@@ -29,7 +49,9 @@ _SCAN_JS = """
         out.push({label, role, name: name || null, selector: sel,
                   container, is_in_iframe: false, is_in_shadow: container === 'shadow'});
     }
-    const SEL = 'a, button, [role=button], [role=link], input[type=submit], select, [onclick]';
+    const SEL = 'a, button, [role=button], [role=link], [role=checkbox], [role=radio], '
+        + '[role=tab], [role=menuitem], input:not([type=hidden]), textarea, select, '
+        + '[contenteditable=true], [onclick]';
     function containerOf(el) {
         let p = el;
         while (p) {

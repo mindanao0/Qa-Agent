@@ -229,6 +229,14 @@ class SFGTraversalExplorer:
         logger.debug(f"click '{c.label}' failed (all layers)")
         return False
 
+    async def _settle(self, page: Page) -> None:
+        """Best-effort wait for SPA hydration before scanning (bounded)."""
+        try:
+            await page.wait_for_load_state("networkidle", timeout=3_000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(700)
+
     async def _replay(self, page: Page, seed: str, path: list[dict]) -> bool:
         try:
             await page.goto(seed, wait_until="domcontentloaded", timeout=30_000)
@@ -257,7 +265,7 @@ class SFGTraversalExplorer:
         start = time.monotonic()
         try:
             await page.goto(seed_url, wait_until="domcontentloaded", timeout=30_000)
-            await page.wait_for_timeout(500)
+            await self._settle(page)
         except Exception as exc:
             logger.warning(f"SFGTraversal: seed goto failed {exc!r}")
             return self._store
