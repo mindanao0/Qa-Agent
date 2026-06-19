@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from collections import deque
 from datetime import datetime, timezone
@@ -87,6 +88,13 @@ class SFGTraversalExplorer:
         self.merges = 0  # fuzzy/exact re-recognitions (dedup hits)
 
     # ── signature + dedup ────────────────────────────────────────────────
+    @staticmethod
+    def _norm_name(s: str) -> str:
+        # strip volatile numeric / price / date / time tokens so re-seeing a
+        # state (with rotating ads/counts) stays stable
+        s = re.sub(r"\d[\d,.:/$%+-]*", "", (s or "").lower())
+        return re.sub(r"\s+", " ", s).strip()[:40]
+
     async def _signature(self, page: Page):
         try:
             dom = await page.evaluate(_DOM_SIG_JS)
@@ -97,29 +105,27 @@ class SFGTraversalExplorer:
             cands = await self._scanner.scan(page)
         except Exception:
             cands = []
-        a11y = frozenset((c.role or "", (c.name or c.label or "")[:40]) for c in cands)
+        # STABLE MULTISET: nav + form/button controls (priority<=1), volatile
+        # tokens stripped, DUPLICATES PRESERVED (sorted tuple). Counts matter —
+        # "1 item in cart" (5 add + 1 remove) differs from "2 in cart" (4 add +
+        # 2 remove) — so in-page state changes register; rotating content/ads
+        # (priority 2) and numeric churn are excluded → re-seen state is stable.
+        a11y = tuple(sorted(
+            (c.role or "", self._norm_name(c.name or c.label or ""))
+            for c in cands if c.priority <= 1
+        ))
         return _url_path(page.url), dom_hash, a11y, cands
 
-    def _resolve(self, url_path: str, dom_hash: str, a11y: frozenset):
-        # Content-aware identity: url path + structural DOM + interactive a11y
-        # (role,name) multiset — so in-page state changes (button toggles, cart
-        # badge, enable/disable) register as distinct states.
-        a11y_key = "|".join(sorted(f"{r}:{n}" for r, n in a11y))
-        primary = hashlib.sha256(
-            f"{url_path}|{dom_hash}|{a11y_key}".encode()
-        ).hexdigest()[:16]
-        if primary in self._sigs:
-            return primary, False
-        # Fuzzy merge only near-identical a11y on the same path (volatile churn),
-        # keeping dedup_precision high without collapsing genuine states.
-        for nid, (npath, sig) in self._sigs.items():
-            if npath != url_path:
-                continue
-            union = len(a11y | sig) or 1
-            dist = 1.0 - (len(a11y & sig) / union)
-            if dist <= self.a11y_threshold:
-                return nid, False  # merge — re-seen state, not new
-        return primary, True
+    def _primary(self, url_path: str, a11y: tuple) -> str:
+        a11y_key = "|".join(f"{r}:{n}" for r, n in a11y)
+        return hashlib.sha256(f"{url_path}|{a11y_key}".encode()).hexdigest()[:16]
+
+    def _resolve(self, url_path: str, dom_hash: str, a11y: tuple):
+        # Identity = url path + stable interactive a11y multiset (counts included;
+        # NOT the volatile structural DOM hash). Exact match — normalization +
+        # priority filter already remove the churn that caused false-new states.
+        primary = self._primary(url_path, a11y)
+        return primary, (primary not in self._sigs)
 
     async def _record(self, page: Page, title: str = ""):
         self.observations += 1
@@ -143,9 +149,8 @@ class SFGTraversalExplorer:
         Used by the eval harness's dedup probe: re-observing the same state must
         yield the same hash (dedup_precision).
         """
-        url_path, dom_hash, a11y, _ = await self._signature(page)
-        a11y_key = "|".join(sorted(f"{r}:{n}" for r, n in a11y))
-        return hashlib.sha256(f"{url_path}|{dom_hash}|{a11y_key}".encode()).hexdigest()[:16]
+        url_path, _dom_hash, a11y, _ = await self._signature(page)
+        return self._primary(url_path, a11y)
 
     # ── click + replay ───────────────────────────────────────────────────
     @staticmethod
