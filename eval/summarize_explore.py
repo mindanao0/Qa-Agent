@@ -72,7 +72,26 @@ def main() -> None:
         print(f"| {label} | {clicks} | {fail} | {_fmt(row['success_rate'])} | "
               f"{healed} | {row['llm_call_pct']} |")
 
-    summary = {"explore": [], "locator": out_loc}
+    print("\n## Form-filling (post-login traversal)\n")
+    print("| config | post_login_states | auth_success_rate | coverage | blocked_submits |")
+    print("|---|---|---|---|---|")
+    out_form = []
+    for label, fn in [("baseline", "form_baseline.json"),
+                      ("+fill (F1)", "explore_f1.json"),
+                      ("+submit (F2)", "explore_f2.json")]:
+        d = _load(fn)
+        if not d:
+            continue
+        m = d["metrics"]
+        bs = sum((p.get("diagnostics", {}) or {}).get("blocked_submits", 0) or 0
+                 for p in d.get("per_target", []))
+        out_form.append({"label": label, "post_login_states": m.get("post_login_states_total"),
+                         "auth_success_rate": m.get("auth_success_rate"),
+                         "reachable_coverage": m.get("reachable_coverage"), "blocked_submits": bs})
+        print(f"| {label} | {m.get('post_login_states_total')} | {_fmt(m.get('auth_success_rate'))} | "
+              f"{_fmt(m.get('reachable_coverage'))} | {bs} |")
+
+    summary = {"explore": [], "locator": out_loc, "form": out_form}
     for label, fn in EXPLORE:
         d = _load(fn)
         if d:

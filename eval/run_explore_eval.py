@@ -163,6 +163,7 @@ async def eval_target(t: dict, mode: str = "baseline", headless: bool = True,
                     "edges": store.edge_count(), "clicks": crawler.click_attempts,
                     "click_fail": crawler.click_fail, "healed_l1": crawler.healed_l1,
                     "compound_fills": crawler.compound_fills,
+                    "blocked_submits": crawler.blocked_submits,
                     "blocked": crawler.blocked, "dedup_hits": crawler.merges,
                     "observations": crawler.observations,
                 }

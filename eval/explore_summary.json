@@ -39,5 +39,28 @@
       "healed_by_l1": 0,
       "llm_call_pct": 0.0
     }
+  ],
+  "form": [
+    {
+      "label": "baseline",
+      "post_login_states": 0,
+      "auth_success_rate": 0.0,
+      "reachable_coverage": 0.525,
+      "blocked_submits": 0
+    },
+    {
+      "label": "+fill (F1)",
+      "post_login_states": 7,
+      "auth_success_rate": 0.6667,
+      "reachable_coverage": 0.685,
+      "blocked_submits": 0
+    },
+    {
+      "label": "+submit (F2)",
+      "post_login_states": 9,
+      "auth_success_rate": 1.0,
+      "reachable_coverage": 0.705,
+      "blocked_submits": 0
+    }
   ]
 }

@@ -99,6 +99,7 @@ class SFGTraversalExplorer:
         self.click_fail = 0
         self.healed_l1 = 0  # clicks rescued by Layer-1 (semantic/fuzzy, no LLM)
         self.compound_fills = 0  # forms filled+submitted (F1)
+        self.blocked_submits = 0  # form submits refused for safety (F2)
         self.observations = 0
         self.merges = 0  # fuzzy/exact re-recognitions (dedup hits)
 
@@ -186,6 +187,25 @@ class SFGTraversalExplorer:
         return _dummy_for_type("text")
 
     @staticmethod
+    async def _action_blocked(page: Page, cand: ElementCandidate) -> bool:
+        """True if the submit button's <form> action targets a BLOCKED endpoint
+        (transfer/payment/delete/logout) — defense beyond button text (F2)."""
+        name = (cand.name or cand.label or "").strip().lower()
+        if not name:
+            return False
+        try:
+            action = await page.evaluate(
+                """(txt) => {
+                    const els = [...document.querySelectorAll('button,input[type=submit],[role=button]')];
+                    const b = els.find(e => ((e.innerText||e.value||'').trim().toLowerCase()).includes(txt));
+                    const f = b && b.closest('form');
+                    return f ? String(f.getAttribute('action') || f.action || '') : '';
+                }""", name)
+        except Exception:
+            return False
+        return any(p in (action or "").lower() for p in BLOCKED_ACTION_PATTERNS)
+
+    @staticmethod
     def _locate(page: Page, c: ElementCandidate):
         if c.role and c.name:
             return page.get_by_role(c.role, name=c.name).first
@@ -270,13 +290,27 @@ class SFGTraversalExplorer:
                 continue
         return False
 
+    async def _wait_actionable(self, page: Page, tries: int = 5, step_ms: int = 700) -> None:
+        """Poll until interactive elements render — surfaces late SPA forms (F2)."""
+        for _ in range(tries):
+            try:
+                n = await page.evaluate(
+                    "() => document.querySelectorAll("
+                    "'a,button,input,select,textarea,[role=button],[role=link]').length")
+                if n > 1:
+                    return
+            except Exception:
+                pass
+            await page.wait_for_timeout(step_ms)
+
     async def _settle(self, page: Page) -> None:
         """Best-effort wait for SPA hydration before scanning (bounded)."""
         try:
             await page.wait_for_load_state("networkidle", timeout=3_000)
         except Exception:
             pass
-        await page.wait_for_timeout(700)
+        await page.wait_for_timeout(400)
+        await self._wait_actionable(page)
 
     async def _replay(self, page: Page, seed: str, path: list[dict],
                       creds: dict | None = None) -> bool:
@@ -284,6 +318,7 @@ class SFGTraversalExplorer:
         try:
             await page.goto(seed, wait_until="domcontentloaded", timeout=30_000)
             await page.wait_for_timeout(300)
+            await self._wait_actionable(page, tries=4, step_ms=600)
         except Exception:
             return False
         for step in path:
@@ -351,6 +386,8 @@ class SFGTraversalExplorer:
                     continue  # inputs are filled within a submit compound, not clicked alone
                 if _is_blocked(cand.label):
                     self.blocked += 1
+                    if has_inputs and any(k in (cand.label or "").lower() for k in _SUBMIT_KW):
+                        self.blocked_submits += 1  # refused to submit a blocked form
                     continue
                 # restore to this state before each action attempt
                 if not await self._replay(page, seed_url, path, creds):
@@ -361,6 +398,9 @@ class SFGTraversalExplorer:
                 # steps so the edge's replay reproduces it (values re-derived, never stored).
                 fill_steps: list[dict] = []
                 is_safe_submit = any(k in (cand.label or "").lower() for k in _SAFE_SUBMIT_KW)
+                if is_safe_submit and has_inputs and await self._action_blocked(page, cand):
+                    self.blocked_submits += 1  # safe-looking button, but form posts to a blocked endpoint
+                    continue
                 if is_safe_submit and has_inputs:
                     for inp in cur_cands:
                         if (inp.role or "") not in _FILL_ROLES:
@@ -399,7 +439,7 @@ class SFGTraversalExplorer:
             f"SFGTraversal: states={self._store.node_count()} edges={self._store.edge_count()} "
             f"blocked={self.blocked} clicks={self.click_attempts}/fail={self.click_fail} "
             f"healed_l1={self.healed_l1} compound_fills={self.compound_fills} "
-            f"obs={self.observations} dedup_hits={self.merges}"
+            f"blocked_submits={self.blocked_submits} obs={self.observations} dedup_hits={self.merges}"
         )
         return self._store
 
