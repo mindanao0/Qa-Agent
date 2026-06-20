@@ -66,6 +66,25 @@ def _reached(expected: str, paths: set[str]) -> bool:
     return any(e == p or p.endswith(e) or e in p for p in paths)
 
 
+def _load_creds() -> dict:
+    """Load demo test credentials from the gitignored store. Never logs values."""
+    p = ROOT / "eval" / "test_credentials.json"
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _post_login_count(urls: list[str], patterns: list[str]) -> int:
+    """Count state URLs whose path matches any expected post-login pattern."""
+    pats = [p.rstrip("/") for p in (patterns or [])]
+    if not pats:
+        return 0
+    return sum(1 for u in urls if any(pp in _path(u) for pp in pats))
+
+
 async def _dedup_probe(page, urls: list[str]) -> tuple[float | None, int]:
     """Ground each url twice; precision = fraction with identical node_id."""
     if not urls:
@@ -93,7 +112,8 @@ async def _dedup_probe(page, urls: list[str]) -> tuple[float | None, int]:
     return (stable / total if total else None), total
 
 
-async def eval_target(t: dict, mode: str = "baseline", headless: bool = True) -> dict:
+async def eval_target(t: dict, mode: str = "baseline", headless: bool = True,
+                      preauth: bool = True) -> dict:
     res: dict = {"target_id": t["target_id"], "seed_url": t["seed_url"],
                  "expected_states_min": t["expected_states_min"]}
     t0 = time.monotonic()
@@ -103,12 +123,14 @@ async def eval_target(t: dict, mode: str = "baseline", headless: bool = True) ->
         page = await ctx.new_page()
         try:
             await page.goto(t["seed_url"], wait_until="domcontentloaded", timeout=30_000)
-            auth = AuthManager(username=t.get("username"), password=t.get("password"))
-            try:
-                await auth.setup(page)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(f"{t['target_id']}: auth failed {exc!r}")
-            await page.wait_for_timeout(1_500)
+            creds = _load_creds().get(t.get("cred_key") or "", {})
+            auth = AuthManager(username=creds.get("username"), password=creds.get("password"))
+            if preauth:
+                try:
+                    await auth.setup(page)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(f"{t['target_id']}: auth failed {exc!r}")
+                await page.wait_for_timeout(1_500)
 
             base = f"{urlsplit(page.url).scheme}://{urlsplit(page.url).netloc}"
             seed = page.url
@@ -120,6 +142,7 @@ async def eval_target(t: dict, mode: str = "baseline", headless: bool = True) ->
                 states_discovered = store.node_count()
                 node_urls = [n.url for n in store.get_nodes_by_url_prefix(base)]
                 all_paths = {_path(u) for u in node_urls}
+                post_login = _post_login_count(node_urls, t.get("expected_post_login_states", []))
                 # dedup probe with the crawler's OWN signature (re-seen state -> same id)
                 stable = total = 0
                 for u in (node_urls[:3] or [seed]):
@@ -153,6 +176,7 @@ async def eval_target(t: dict, mode: str = "baseline", headless: bool = True) ->
                 nav = await explorer.explore(page, disc_urls or [page.url])
                 explored_urls = [p.url for p in nav.pages]
                 all_paths = {_path(u) for u in (disc_urls + explored_urls)}
+                post_login = _post_login_count(disc_urls + explored_urls, t.get("expected_post_login_states", []))
                 probe_urls = (disc_urls or [page.url])[:3]
                 dedup_precision, n_probe = await _dedup_probe(page, probe_urls)
                 diag_extra = {
@@ -168,6 +192,8 @@ async def eval_target(t: dict, mode: str = "baseline", headless: bool = True) ->
                 "states_discovered": states_discovered,
                 "reachable_coverage": reachable_coverage,
                 "dedup_precision": dedup_precision,
+                "post_login_states": post_login,
+                "auth_required": bool(t.get("auth_required")),
                 "diagnostics": {**diag_extra, "expected_reachable": len(expected),
                                 "reached": hits, "dedup_probe_n": n_probe,
                                 "elapsed_s": round(time.monotonic() - t0, 1)},
@@ -181,7 +207,7 @@ async def eval_target(t: dict, mode: str = "baseline", headless: bool = True) ->
 
 
 async def run(golden: Path, label: str, mode: str, limit: int | None, only: str | None,
-              headless: bool) -> dict:
+              headless: bool, preauth: bool = True) -> dict:
     targets = [json.loads(l) for l in golden.read_text(encoding="utf-8").splitlines() if l.strip()]
     if only:
         targets = [t for t in targets if t["target_id"] == only]
@@ -191,12 +217,17 @@ async def run(golden: Path, label: str, mode: str, limit: int | None, only: str 
     per = []
     for i, t in enumerate(targets, 1):
         logger.info(f"[{i}/{len(targets)}] {t['target_id']} — {t['seed_url']} (mode={mode})")
-        per.append(await eval_target(t, mode=mode, headless=headless))
+        per.append(await eval_target(t, mode=mode, headless=headless, preauth=preauth))
 
     ok = [p for p in per if "states_discovered" in p]
     def _avg(key):
         vals = [p[key] for p in ok if p.get(key) is not None]
         return round(sum(vals) / len(vals), 4) if vals else None
+    _auth = [p for p in ok if p.get("auth_required")]
+    auth_success_rate = (
+        round(sum(1 for p in _auth if (p.get("post_login_states") or 0) >= 1) / len(_auth), 4)
+        if _auth else None
+    )
     summary = {
         "label": label,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -206,6 +237,8 @@ async def run(golden: Path, label: str, mode: str, limit: int | None, only: str 
             "states_discovered_avg": _avg("states_discovered"),
             "reachable_coverage": _avg("reachable_coverage"),
             "dedup_precision": _avg("dedup_precision"),
+            "post_login_states_total": sum(p.get("post_login_states", 0) for p in ok),
+            "auth_success_rate": auth_success_rate,
         },
         "per_target": per,
     }
@@ -221,14 +254,17 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--only", default=None)
     ap.add_argument("--headed", action="store_true")
+    ap.add_argument("--no-preauth", action="store_true",
+                    help="skip AuthManager pre-auth so the crawler must log in itself (form track)")
     args = ap.parse_args()
 
     summary = asyncio.run(run(Path(args.golden), args.label, args.mode, args.limit,
-                              args.only, headless=not args.headed))
+                              args.only, headless=not args.headed, preauth=not args.no_preauth))
     print(json.dumps(summary["metrics"], indent=2, ensure_ascii=False))
     for p in summary["per_target"]:
         sd, rc, dp = p.get("states_discovered"), p.get("reachable_coverage"), p.get("dedup_precision")
-        print(f"  {p['target_id']:24s} states={sd} reach={rc} dedup={dp} {p.get('error','')}")
+        pl = f" postlogin={p.get('post_login_states')}" if p.get("auth_required") else ""
+        print(f"  {p['target_id']:24s} states={sd} reach={rc} dedup={dp}{pl} {p.get('error','')}")
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")

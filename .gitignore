@@ -40,3 +40,6 @@ reports/multi_site/_run_log*.txt
 # Misc
 package-lock.json
 audit/wddm_backup.reg
+
+# Test credentials — NEVER commit passwords (use eval/test_credentials.example.json as template)
+eval/test_credentials.json

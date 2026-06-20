@@ -28,7 +28,8 @@ from pathlib import Path
 TARGETS: list[dict] = [
     {
         "target_id": "saucedemo_flow", "seed_url": "https://www.saucedemo.com/",
-        "username": "standard_user", "password": "secret_sauce",
+        "auth_required": True, "cred_key": "saucedemo",
+        "expected_post_login_states": ["/inventory.html", "/cart.html", "/checkout-step-one.html"],
         "expected_states_min": 6,
         "expected_reachable_pages": [
             "/inventory.html", "/inventory-item.html", "/cart.html",
@@ -53,7 +54,8 @@ TARGETS: list[dict] = [
     },
     {
         "target_id": "orangehrm", "seed_url": "https://opensource-demo.orangehrmlive.com/",
-        "username": "Admin", "password": "admin123",
+        "auth_required": True, "cred_key": "orangehrm",
+        "expected_post_login_states": ["/dashboard", "/admin/viewSystemUsers", "/pim/viewEmployeeList"],
         "expected_states_min": 6,
         "expected_reachable_pages": [
             "/dashboard", "/admin/viewSystemUsers", "/pim/viewEmployeeList",
@@ -96,7 +98,8 @@ TARGETS: list[dict] = [
     },
     {
         "target_id": "saucedemo_problem", "seed_url": "https://www.saucedemo.com/",
-        "username": "problem_user", "password": "secret_sauce",
+        "auth_required": True, "cred_key": "saucedemo_problem",
+        "expected_post_login_states": ["/inventory.html", "/cart.html"],
         "expected_states_min": 5,
         "expected_reachable_pages": [
             "/inventory.html", "/cart.html", "/inventory-item.html",
