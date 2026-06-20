@@ -34,7 +34,20 @@ from playwright.async_api import Page
 
 from src.contractskill.sfg import BLOCKED_ACTION_PATTERNS, SFGEdge, SFGNode, SFGStore
 from src.universal_qa.explorer.element_scanner import ElementScanner
+from src.universal_qa.explorer.form_filler import _dummy_for_type
 from src.universal_qa.explorer.nav_map import ElementCandidate
+
+# Fill-vs-click classification (Phase F1)
+_FILL_ROLES = frozenset({"textbox", "searchbox", "combobox"})
+_SUBMIT_KW = ("submit", "login", "log in", "sign in", "signin", "sign up",
+              "signup", "search", "send", "save", "continue", "next", "register")
+# F1 auto-submits ONLY clearly side-effect-free forms (login / search / filter).
+# Registration / contact / generic submit are NOT auto-submitted (they create
+# accounts / send messages). F2 hardens this further with an endpoint heuristic.
+_SAFE_SUBMIT_KW = ("login", "log in", "sign in", "signin", "search", "filter", "apply")
+# Fields that must NEVER receive synthetic data (PII / financial) — Phase F1 invariant
+_PII_FINANCIAL_KW = ("card", "cvv", "cvc", "ssn", "social security", "account number",
+                     "routing", "iban", "credit", "debit", "amount", "salary", "income")
 
 # Structural DOM signature: tag(+role) skeleton of the body, ignoring volatile
 # text / ids / attributes. Stable across content churn, sensitive to structure.
@@ -85,6 +98,7 @@ class SFGTraversalExplorer:
         self.click_attempts = 0
         self.click_fail = 0
         self.healed_l1 = 0  # clicks rescued by Layer-1 (semantic/fuzzy, no LLM)
+        self.compound_fills = 0  # forms filled+submitted (F1)
         self.observations = 0
         self.merges = 0  # fuzzy/exact re-recognitions (dedup hits)
 
@@ -154,6 +168,23 @@ class SFGTraversalExplorer:
         return self._primary(url_path, a11y)
 
     # ── click + replay ───────────────────────────────────────────────────
+    @staticmethod
+    def _fill_value(cand: ElementCandidate, creds: dict) -> str | None:
+        """Value to fill a field (Phase F1). PII/financial-safe; user/pass only from config creds."""
+        name = (cand.name or cand.label or "").lower()
+        if any(k in name for k in _PII_FINANCIAL_KW):
+            return None  # NEVER inject synthetic data into PII/financial fields
+        if any(k in name for k in ("password", "passwd", "pwd")):
+            return creds.get("password")  # only a real test cred (None -> skip)
+        if any(k in name for k in ("username", "user name", "userid", "user id", "login")):
+            return creds.get("username")
+        if "email" in name or "e-mail" in name:
+            cu = creds.get("username") or ""
+            return cu if "@" in cu else "test@example.com"
+        if cand.role == "searchbox" or "search" in name:
+            return "test"
+        return _dummy_for_type("text")
+
     @staticmethod
     def _locate(page: Page, c: ElementCandidate):
         if c.role and c.name:
@@ -229,6 +260,16 @@ class SFGTraversalExplorer:
         logger.debug(f"click '{c.label}' failed (all layers)")
         return False
 
+    async def _fill(self, page: Page, c: ElementCandidate, value: str) -> bool:
+        """Fill a field via the semantic-locator order. NEVER logs the value (creds)."""
+        for loc in self._candidate_locators(page, c):
+            try:
+                await loc.fill(value, timeout=1_500)
+                return True
+            except Exception:
+                continue
+        return False
+
     async def _settle(self, page: Page) -> None:
         """Best-effort wait for SPA hydration before scanning (bounded)."""
         try:
@@ -237,7 +278,9 @@ class SFGTraversalExplorer:
             pass
         await page.wait_for_timeout(700)
 
-    async def _replay(self, page: Page, seed: str, path: list[dict]) -> bool:
+    async def _replay(self, page: Page, seed: str, path: list[dict],
+                      creds: dict | None = None) -> bool:
+        creds = creds or {}
         try:
             await page.goto(seed, wait_until="domcontentloaded", timeout=30_000)
             await page.wait_for_timeout(300)
@@ -246,7 +289,11 @@ class SFGTraversalExplorer:
         for step in path:
             cand = ElementCandidate(label=step["label"], role=step.get("role"),
                                     name=step.get("name"), selector=step.get("selector"))
-            if not await self._click(page, cand):
+            if step.get("fill"):
+                val = self._fill_value(cand, creds)  # RE-DERIVED, never stored in path
+                if val is None or not await self._fill(page, cand, val):
+                    return False
+            elif not await self._click(page, cand):
                 return False
         return True
 
@@ -254,14 +301,19 @@ class SFGTraversalExplorer:
     def _script(seed: str, path: list[dict]) -> str:
         lines = [f"page.goto({seed!r})"]
         for s in path:
-            if s.get("role") and s.get("name"):
+            tgt = s.get("name") or s["label"]
+            if s.get("fill"):
+                # value intentionally masked — credentials are never stored/logged
+                lines.append(f"page.get_by_label({tgt!r}).fill(<test_credential>)")
+            elif s.get("role") and s.get("name"):
                 lines.append(f"page.get_by_role({s['role']!r}, name={s['name']!r}).first.click()")
             else:
-                lines.append(f"page.get_by_text({(s.get('name') or s['label'])!r}).first.click()")
+                lines.append(f"page.get_by_text({tgt!r}).first.click()")
         return json.dumps(lines)
 
     # ── main loop ────────────────────────────────────────────────────────
-    async def explore(self, page: Page, seed_url: str) -> SFGStore:
+    async def explore(self, page: Page, seed_url: str, creds: dict | None = None) -> SFGStore:
+        creds = creds or {}
         start = time.monotonic()
         try:
             await page.goto(seed_url, wait_until="domcontentloaded", timeout=30_000)
@@ -289,18 +341,37 @@ class SFGTraversalExplorer:
                 continue
             expanded.add(node_id)
 
-            if not await self._replay(page, seed_url, path):
+            if not await self._replay(page, seed_url, path, creds):
                 continue
             cur_id, _, cands = await self._record(page)
+            has_inputs = any((c.role or "") in _FILL_ROLES for c in cands)
 
             for cand in cands[: self.max_actions]:
+                if (cand.role or "") in _FILL_ROLES:
+                    continue  # inputs are filled within a submit compound, not clicked alone
                 if _is_blocked(cand.label):
                     self.blocked += 1
                     continue
                 # restore to this state before each action attempt
-                if not await self._replay(page, seed_url, path):
+                if not await self._replay(page, seed_url, path, creds):
                     break
-                src_id, _, _ = await self._record(page)
+                src_id, _, cur_cands = await self._record(page)
+                # Compound fill->submit (F1): before clicking a submit-like button on a
+                # form, fill the form's inputs (creds-aware, PII-safe). Recorded as fill
+                # steps so the edge's replay reproduces it (values re-derived, never stored).
+                fill_steps: list[dict] = []
+                is_safe_submit = any(k in (cand.label or "").lower() for k in _SAFE_SUBMIT_KW)
+                if is_safe_submit and has_inputs:
+                    for inp in cur_cands:
+                        if (inp.role or "") not in _FILL_ROLES:
+                            continue
+                        val = self._fill_value(inp, creds)
+                        if val is None:
+                            continue
+                        if await self._fill(page, inp, val):
+                            fill_steps.append({"label": inp.label, "role": inp.role,
+                                               "name": inp.name, "selector": inp.selector,
+                                               "fill": True})
                 if not await self._click(page, cand):
                     continue
                 tgt_id, is_new, _ = await self._record(page)
@@ -311,20 +382,24 @@ class SFGTraversalExplorer:
                 edge_id = hashlib.sha256(
                     f"{src_id}|{cand.role}|{cand.name or cand.label}".encode()
                 ).hexdigest()[:16]
-                new_path = path + [step]
+                new_path = path + fill_steps + [step]
                 self._store.upsert_edge(SFGEdge(
                     edge_id=edge_id, source_node_id=src_id, target_node_id=tgt_id,
-                    action_type="click", locator=f"{cand.role or 'element'}:{cand.name or cand.label}",
+                    action_type=("fill_submit" if fill_steps else "click"),
+                    locator=f"{cand.role or 'element'}:{cand.name or cand.label}",
                     input_value=None, safety_flag="SAFE",
                     replay_script=self._script(seed_url, new_path),
                 ))
+                if fill_steps:
+                    self.compound_fills += 1
                 if is_new and depth + 1 <= self.max_depth:
                     queue.append((tgt_id, new_path, depth + 1))
 
         logger.info(
             f"SFGTraversal: states={self._store.node_count()} edges={self._store.edge_count()} "
             f"blocked={self.blocked} clicks={self.click_attempts}/fail={self.click_fail} "
-            f"healed_l1={self.healed_l1} obs={self.observations} dedup_hits={self.merges}"
+            f"healed_l1={self.healed_l1} compound_fills={self.compound_fills} "
+            f"obs={self.observations} dedup_hits={self.merges}"
         )
         return self._store
 

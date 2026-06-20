@@ -138,7 +138,7 @@ async def eval_target(t: dict, mode: str = "baseline", headless: bool = True,
             if mode == "sfg":
                 store = SFGStore(db_path=Path(tempfile.mkdtemp(prefix="uqa_sfg_")) / "sfg.db")
                 crawler = SFGTraversalExplorer(store, max_states=150, time_budget_s=180)
-                await crawler.explore(page, seed)
+                await crawler.explore(page, seed, creds)
                 states_discovered = store.node_count()
                 node_urls = [n.url for n in store.get_nodes_by_url_prefix(base)]
                 all_paths = {_path(u) for u in node_urls}
@@ -162,6 +162,7 @@ async def eval_target(t: dict, mode: str = "baseline", headless: bool = True,
                 diag_extra = {
                     "edges": store.edge_count(), "clicks": crawler.click_attempts,
                     "click_fail": crawler.click_fail, "healed_l1": crawler.healed_l1,
+                    "compound_fills": crawler.compound_fills,
                     "blocked": crawler.blocked, "dedup_hits": crawler.merges,
                     "observations": crawler.observations,
                 }
