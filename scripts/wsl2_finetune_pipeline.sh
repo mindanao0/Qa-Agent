@@ -18,7 +18,9 @@
 set -euo pipefail
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-PROJ_DIR="/mnt/d/Code/qa-agent"
+# PROJ_DIR resolves to the repo root (script lives in <root>/scripts/), with an
+# env override; no longer hardcoded to the Windows /mnt/d path.
+PROJ_DIR="${PROJ_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 VENV_DIR="${HOME}/.qa-finetune-env"
 TRAINER="${PROJ_DIR}/src/finetune/wsl2_trainer.py"
 DATASET="${PROJ_DIR}/data/training/train.jsonl"
@@ -26,6 +28,8 @@ CKPT_DIR="${PROJ_DIR}/models/finetune_output"
 GGUF_DIR="${PROJ_DIR}/models/qwen2.5-coder-finetuned"
 GGUF_FINAL="${GGUF_DIR}/qwen2.5-coder-finetuned.Q4_K_M.gguf"
 MAX_STEPS="${MAX_STEPS:-100}"
+# 7B only per project mandate (never the 1.5b/3b presets); override via env if needed.
+MODEL_SIZE="${MODEL_SIZE:-7b}"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -133,6 +137,7 @@ ok "  Dataset: ${COUNT} examples"
 mkdir -p "${CKPT_DIR}"
 
 python "${TRAINER}" \
+    --model "${MODEL_SIZE}" \
     --dataset "${DATASET}" \
     --output  "${CKPT_DIR}" \
     --max-steps "${MAX_STEPS}"
@@ -143,6 +148,7 @@ log "Step 4/4 — Export GGUF Q4_K_M"
 mkdir -p "${GGUF_DIR}"
 
 python "${TRAINER}" \
+    --model "${MODEL_SIZE}" \
     --export-only \
     --checkpoint "${CKPT_DIR}/final" \
     --output     "${GGUF_DIR}"

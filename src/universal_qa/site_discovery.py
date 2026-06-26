@@ -17,6 +17,7 @@ from playwright.async_api import Page
 from src.contractskill.crawler import CrawlerConfig, SFGCrawler
 from src.contractskill.sfg import SFGStore
 from src.perception.grounder import Grounder
+from src.universal_qa.explorer.form_filler import FormFiller
 
 
 class SiteDiscovery:
@@ -29,6 +30,7 @@ class SiteDiscovery:
     def __init__(self, max_pages: int = 50, max_depth: int = 6) -> None:
         self.max_pages = max_pages
         self.max_depth = max_depth
+        self._form_filler = FormFiller()  # dummy-fill only (no LLM client → no GPU)
 
     async def discover(
         self,
@@ -96,7 +98,10 @@ class SiteDiscovery:
                     interaction_links = await self._discover_by_interaction(
                         page, url, base_domain
                     )
-                    all_links = links + interaction_links
+                    # 3. Form-progression: กรอกฟอร์มด้วย dummy แล้วกดปุ่ม advance
+                    #    (continue/next/proceed) เพื่อทะลุ multi-step flow เช่น checkout
+                    form_links = await self._progress_forms(page, url, base_domain)
+                    all_links = links + interaction_links + form_links
                     logger.debug(
                         f"SiteDiscovery: {len(links)} href + {len(interaction_links)} interaction links on {url}"
                     )
@@ -123,22 +128,34 @@ class SiteDiscovery:
         ใช้สำหรับ SPA ที่ใช้ href='#' หรือ JavaScript navigation แทน <a href>.
         """
         _BLOCKED_TEXT = frozenset({
-            "add to cart", "remove", "delete", "checkout", "login", "logout",
+            "add to cart", "remove", "delete", "login", "logout",
             "register", "submit", "send", "buy", "purchase", "sign up", "sign in",
-            "เพิ่มลงตะกร้า", "ลบ", "ชำระเงิน", "เข้าสู่ระบบ", "ออกจากระบบ",
+            "finish", "place order", "pay now", "confirm order",
+            "เพิ่มลงตะกร้า", "ลบ", "เข้าสู่ระบบ", "ออกจากระบบ",
         })
 
         candidates: list[dict] = await page.evaluate("""() => {
-            const BLOCKED = ['add to cart','remove','delete','checkout','login',
-                             'logout','register','submit','send','buy','purchase'];
+            // บล็อกเฉพาะ action ที่ "เปลี่ยนข้อมูลจริง" — checkout เป็นแค่ navigation ไปหน้า form
+            // (ไม่ใช่การยืนยันคำสั่งซื้อ) จึงค้นพบได้; ส่วนที่ commit จริง (finish/pay/place order) ยังบล็อก
+            const BLOCKED = ['add to cart','remove','delete','login',
+                             'logout','register','submit','send','buy','purchase',
+                             'finish','place order','pay now','confirm order'];
             const seen = new Set();
             const results = [];
-            document.querySelectorAll('a, [role="link"], [role="button"]').forEach(el => {
+            document.querySelectorAll('a, button, input[type=submit], [role="link"], [role="button"]').forEach(el => {
                 const href = el.getAttribute('href');
                 // ข้ามถ้า href เป็น URL จริงหรือ path จริง (จัดการโดย href extraction แล้ว)
                 if (href && href.startsWith('http')) return;
                 if (href && href.startsWith('/') && href.length > 1 && !href.startsWith('/#')) return;
-                const text = (el.textContent || '').trim().toLowerCase();
+                // label: visible text ก่อน, ถ้าว่าง (เช่น icon cart/account ล้วน) ใช้
+                // aria-label/title/data-test/id/class แทน เพื่อให้ icon-only links ถูกค้นพบ
+                let text = (el.textContent || '').trim().toLowerCase();
+                if (!text) {
+                    text = (el.getAttribute('aria-label') || el.getAttribute('title')
+                            || el.getAttribute('data-test') || el.id
+                            || (typeof el.className === 'string' ? el.className : '')
+                           ).trim().toLowerCase().replace(/[-_]+/g, ' ');
+                }
                 if (!text || seen.has(text)) return;
                 if (BLOCKED.some(b => text.includes(b))) return;
                 seen.add(text);
@@ -147,7 +164,7 @@ class SiteDiscovery:
                     : (el.className && typeof el.className === 'string' && el.className.trim()
                         ? el.tagName.toLowerCase() + '.' + el.className.trim().split(/\s+/)[0]
                         : el.tagName.toLowerCase() + ':nth-of-type(' + (Array.from(el.parentNode?.children || []).indexOf(el) + 1) + ')');
-                results.push({selector: sel, text: el.textContent.trim().slice(0, 40)});
+                results.push({selector: sel, text: (el.textContent.trim() || text).slice(0, 40)});
             });
             return results.slice(0, 15);
         }""")
@@ -179,6 +196,71 @@ class SiteDiscovery:
                         await page.goto(original_url, wait_until="networkidle", timeout=15_000)
                 except Exception:
                     pass
+        return discovered
+
+    async def _progress_forms(
+        self, page: Page, original_url: str, base_domain: str
+    ) -> list[str]:
+        """กรอกฟอร์มด้วย dummy data แล้วกดปุ่ม advance เพื่อทะลุหน้าถัดไปของ multi-step flow.
+
+        ปลอดภัย: คลิกเฉพาะปุ่มที่เป็น "ไปต่อ" (continue/next/proceed) เท่านั้น —
+        ไม่แตะ finish/pay/place order/register/login (กันการ commit ข้อมูลจริง).
+        BFS จะ enqueue หน้าใหม่ที่เจอ แล้ว _progress_forms ทำงานซ้ำ → chain ทั้ง flow.
+        """
+        # หาปุ่ม advance ตัวแรก (visible) ที่ข้อความตรงกับ allowlist
+        advance = await page.evaluate("""() => {
+            const ADVANCE = ['continue','next','proceed','ถัดไป','ต่อไป','ดำเนินการต่อ'];
+            const BLOCKED = ['finish','pay','place order','confirm order','submit order',
+                             'register','sign up','login','sign in'];
+            const els = document.querySelectorAll(
+                'button, input[type=submit], a, [role="button"]');
+            for (const el of els) {
+                const rect = el.getBoundingClientRect();
+                if (rect.width === 0 || rect.height === 0) continue;  // ต้อง visible
+                const t = ((el.textContent || el.value || '')).trim().toLowerCase();
+                if (!t) continue;
+                if (BLOCKED.some(b => t.includes(b))) continue;
+                if (!ADVANCE.some(a => t.includes(a))) continue;
+                const sel = el.id ? '#' + el.id
+                    : (el.getAttribute('data-test') ? '[data-test="' + el.getAttribute('data-test') + '"]'
+                       : (el.getAttribute('name') ? el.tagName.toLowerCase() + '[name="' + el.getAttribute('name') + '"]'
+                          : null));
+                if (!sel) continue;
+                return {selector: sel, text: (el.textContent || el.value || '').trim().slice(0, 40)};
+            }
+            return null;
+        }""")
+        if not advance:
+            return []
+
+        discovered: list[str] = []
+        try:
+            pre_url = page.url.split("?")[0].split("#")[0]
+            filled = await self._form_filler.fill_with_dummy(page)
+            el = await page.query_selector(advance["selector"])
+            if not el:
+                return []
+            await el.click(timeout=3_000)
+            await page.wait_for_timeout(500)
+            post_url = page.url.split("?")[0].split("#")[0]
+            if (post_url != pre_url
+                    and urlparse(post_url).netloc == base_domain
+                    and page.url not in discovered):
+                discovered.append(page.url)
+                logger.info(
+                    f"SiteDiscovery: form-progress found {page.url!r} via "
+                    f"'{advance['text']}' (filled {filled} fields)"
+                )
+            # กลับหน้าเดิม
+            if page.url.split("?")[0].split("#")[0] != original_url.split("?")[0].split("#")[0]:
+                await page.goto(original_url, wait_until="networkidle", timeout=15_000)
+        except Exception as exc:
+            logger.debug(f"SiteDiscovery: form-progress skipped — {exc!r}")
+            try:
+                if page.url.split("?")[0].split("#")[0] != original_url.split("?")[0].split("#")[0]:
+                    await page.goto(original_url, wait_until="networkidle", timeout=15_000)
+            except Exception:
+                pass
         return discovered
 
     @staticmethod

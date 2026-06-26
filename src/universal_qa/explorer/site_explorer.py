@@ -35,6 +35,60 @@ def _clean_url(url: str) -> str:
     return url.split("?")[0].split("#")[0]
 
 
+# JS that locates "menu opener" toggles (hamburger/nav toggles) that hide nav
+# behind a click. Reading className/id/aria here is internal DOM scanning, NOT a
+# Playwright locator — it only returns accessible names/roles for get_by_* use.
+_MENU_OPENER_JS = """
+() => {
+    const out = [];
+    const seen = new Set();
+    const NAME_RE = /\\b(menu|open menu|navigation|nav)\\b|เมนู/i;
+    const CLS_RE = /(burger|hamburger|menu-btn|menu_btn|nav-toggle|navbar-toggle)/i;
+    const SEL = 'button, a, [role=button], [aria-haspopup], [aria-expanded]';
+    function isVisible(el) {
+        const s = window.getComputedStyle(el);
+        if (s.display === 'none' || s.visibility === 'hidden' || +s.opacity === 0)
+            return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+    }
+    function accName(el) {
+        return (el.getAttribute('aria-label')
+            || el.getAttribute('title')
+            || el.textContent || el.value || '').trim().slice(0, 60);
+    }
+    function inferRole(el) {
+        const r = el.getAttribute('role');
+        if (r) return r;
+        const t = el.tagName;
+        if (t === 'BUTTON') return 'button';
+        if (t === 'A') return 'link';
+        return null;
+    }
+    document.querySelectorAll(SEL).forEach(el => {
+        if (!isVisible(el)) return;
+        const name = accName(el);
+        const cls = (el.className && typeof el.className === 'string') ? el.className : '';
+        const idv = el.id || '';
+        const haspopup = el.getAttribute('aria-haspopup');
+        const expanded = el.getAttribute('aria-expanded');
+        const isOpener =
+            NAME_RE.test(name)
+            || CLS_RE.test(cls) || CLS_RE.test(idv)
+            || (haspopup && haspopup !== 'false')
+            || expanded === 'false';
+        if (!isOpener) return;
+        const role = inferRole(el);
+        const key = (role || '') + '|' + name + '|' + idv;
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push({name, role});
+    });
+    return out.slice(0, 3);
+}
+"""
+
+
 class SiteExplorer:
     """Phase 3: interaction-based exploration that builds a NavigationMap.
 
@@ -131,7 +185,15 @@ class SiteExplorer:
         title, pam = await self._record_page_node(page)
         snapshot = await self._snapshot_state(page)
 
+        # Reveal hidden navigation (hamburger/menu toggles) before scanning so the
+        # scanner sees logout/about/settings links that are display:none until opened.
+        await self._expand_menus(page, url)
+
         candidates = await self._scanner.scan(page)
+        seen_keys: set[str] = {
+            _element_key(url, c.role, c.name or c.label) for c in candidates
+        }
+        rescanned = False  # re-scan at most once per page to avoid loops
         actions: list[ExploredAction] = []
         new_urls: list[str] = []
 
@@ -159,6 +221,30 @@ class SiteExplorer:
                 visited_actions.add(key)
                 if action.leads_to_url:
                     new_urls.append(action.leads_to_url)
+                # If a non-navigating click on a menu/expander revealed new
+                # elements (state change, no URL change), re-scan once and append
+                # any NEW candidates (dedup by _element_key).
+                if (
+                    not rescanned
+                    and action.leads_to_url is None
+                    and action.state_change is not None
+                    and self._looks_like_expander(cand)
+                ):
+                    rescanned = True
+                    try:
+                        fresh = await self._scanner.scan(page)
+                    except Exception:
+                        fresh = []
+                    added = 0
+                    for fc in fresh:
+                        fkey = _element_key(url, fc.role, fc.name or fc.label)
+                        if fkey in seen_keys:
+                            continue
+                        seen_keys.add(fkey)
+                        candidates.append(fc)
+                        added += 1
+                    if added:
+                        logger.info(f"  ↻ re-scan after expander: +{added} candidate(s)")
             if _clean_url(page.url) != _clean_url(url):
                 try:
                     await page.goto(url, wait_until="networkidle", timeout=15_000)
@@ -204,6 +290,48 @@ class SiteExplorer:
                 state_change={"snapshot": "changed"},
             )
         return None
+
+    @staticmethod
+    def _looks_like_expander(cand: ElementCandidate) -> bool:
+        text = f"{cand.label or ''} {cand.name or ''}".lower()
+        return any(k in text for k in ("menu", "navigation", "nav", "เมนู"))
+
+    async def _expand_menus(self, page: Page, url: str) -> None:
+        """Click up to ~3 visible 'menu opener' toggles to reveal hidden nav.
+
+        These toggles only flip visibility (display:none → visible); they should
+        not navigate. If a click changes the URL, we navigate back to `url`.
+        Locators stay get_by_role/get_by_text only (project rule). Errors swallowed.
+        """
+        try:
+            openers = await page.evaluate(_MENU_OPENER_JS)
+        except Exception as exc:
+            logger.debug(f"  _expand_menus: scan skipped — {exc!r}")
+            return
+        for op in openers[:3]:
+            name = (op.get("name") or "").strip()
+            role = op.get("role")
+            if not name and not role:
+                continue
+            try:
+                if role and name:
+                    loc = page.get_by_role(role, name=name).first
+                elif name:
+                    loc = page.get_by_text(name).first
+                else:
+                    continue
+                await loc.click(timeout=1_500)
+                await page.wait_for_timeout(150)
+                logger.info(f"  ☰ เปิดเมนู \"{name or role}\" เพื่อเผยลิงก์ที่ซ่อนอยู่")
+            except Exception as exc:
+                logger.debug(f"  _expand_menus: click '{name or role}' skipped: {exc!r}")
+                continue
+            # Menu toggles shouldn't navigate; if one did, go back to the page.
+            if _clean_url(page.url) != _clean_url(url):
+                try:
+                    await page.goto(url, wait_until="networkidle", timeout=15_000)
+                except Exception:
+                    pass
 
     @staticmethod
     def _locate(page: Page, cand: ElementCandidate):

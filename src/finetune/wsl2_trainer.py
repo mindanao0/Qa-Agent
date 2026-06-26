@@ -49,15 +49,45 @@ logging.basicConfig(
 )
 logger = logging.getLogger("wsl2_trainer")
 
-# ── Constants (6 GB safe) ────────────────────────────────────────────────────
-BASE_MODEL          = "unsloth/Qwen2.5-Coder-1.5B-Instruct-bnb-4bit"   # 7B fills all VRAM; 1.5B leaves ~4GB for compute
-MAX_SEQ_LENGTH      = 1024
-LORA_R              = 8
-LORA_ALPHA          = 16
+# ── Model presets ─────────────────────────────────────────────────────────────
+# Each preset tuned to fit inside 6 GB VRAM.
+MODEL_PRESETS: dict[str, dict] = {
+    "1.5b": {
+        "base_model":    "unsloth/Qwen2.5-Coder-1.5B-Instruct-bnb-4bit",
+        "max_seq_length": 1024,
+        "lora_r":         8,
+        "lora_alpha":     16,
+        "grad_accum":     8,
+    },
+    "3b": {
+        "base_model":    "unsloth/Qwen2.5-Coder-3B-Instruct-bnb-4bit",
+        "max_seq_length": 1024,
+        "lora_r":         8,
+        "lora_alpha":     16,
+        "grad_accum":     8,
+    },
+    "7b": {
+        "base_model":    "unsloth/Qwen2.5-Coder-7B-Instruct-bnb-4bit",
+        "max_seq_length": 256,   # 512→256: 7B base eats ~5.21GB, leaving <0.4GB for
+                                 # activations on a 6GB (5.61GB usable) card — the first
+                                 # training step OOM'd by ~56MB at seq=512. Halving the
+                                 # sequence halves activation memory to clear it.
+        "lora_r":         4,     # fewer trainable params → less optimizer VRAM
+        "lora_alpha":     8,
+        "grad_accum":     16,    # compensate for smaller seq_len
+    },
+}
+DEFAULT_MODEL_SIZE  = "1.5b"
+
+# ── Runtime constants (filled in from preset at startup) ──────────────────────
+BASE_MODEL          = MODEL_PRESETS[DEFAULT_MODEL_SIZE]["base_model"]
+MAX_SEQ_LENGTH      = MODEL_PRESETS[DEFAULT_MODEL_SIZE]["max_seq_length"]
+LORA_R              = MODEL_PRESETS[DEFAULT_MODEL_SIZE]["lora_r"]
+LORA_ALPHA          = MODEL_PRESETS[DEFAULT_MODEL_SIZE]["lora_alpha"]
 LORA_DROPOUT        = 0.0    # Unsloth recommendation for 4-bit
 TARGET_MODULES      = ["q_proj", "v_proj"]
 BATCH_SIZE          = 1
-GRAD_ACCUM_STEPS    = 8
+GRAD_ACCUM_STEPS    = MODEL_PRESETS[DEFAULT_MODEL_SIZE]["grad_accum"]
 DEFAULT_MAX_STEPS   = 300
 LEARNING_RATE       = 2e-4
 WARMUP_STEPS        = 10
@@ -565,11 +595,19 @@ def export_gguf(checkpoint_dir: Path, output_dir: Path) -> Path:
         quantization_method=GGUF_QUANT_METHOD,
     )
 
-    # Locate the produced .gguf file (Unsloth name varies by version) and
-    # normalise to qa-agent-coder-q4_k_m.gguf so the Ollama Modelfile is stable.
+    # Unsloth may save to output_dir or output_dir_gguf depending on version.
+    # Check both and move files to output_dir so callers have a stable location.
+    gguf_sibling = Path(str(output_dir) + "_gguf")
+    if gguf_sibling.exists():
+        import shutil as _shutil
+        for f in gguf_sibling.iterdir():
+            dest = output_dir / f.name
+            if not dest.exists():
+                _shutil.move(str(f), str(dest))
+                logger.info(f"Moved {f.name} from _gguf dir → {output_dir}")
     candidates = sorted(output_dir.glob("*.gguf"))
     if not candidates:
-        raise RuntimeError(f"No .gguf file produced in {output_dir}")
+        raise RuntimeError(f"No .gguf file produced in {output_dir} or {gguf_sibling}")
     final_gguf = output_dir / GGUF_FILE_NAME
     if candidates[0].name != GGUF_FILE_NAME:
         try:
@@ -607,6 +645,9 @@ def _build_parser() -> argparse.ArgumentParser:
                              "GGUF dir during export)")
     parser.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS,
                         help="Total training steps (default 300)")
+    parser.add_argument("--model", type=str, default=DEFAULT_MODEL_SIZE,
+                        choices=list(MODEL_PRESETS.keys()),
+                        help="Model size preset: 1.5b (default, safe) or 7b (tight on 6GB)")
     parser.add_argument("--export-only", action="store_true",
                         help="Skip training, only export an existing checkpoint to GGUF")
     parser.add_argument("--checkpoint", type=str, default=None,
@@ -617,6 +658,16 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = _build_parser().parse_args()
     out  = Path(args.output).expanduser()
+
+    # Apply model preset — mutates module-level globals so all functions pick it up
+    preset = MODEL_PRESETS[args.model]
+    global BASE_MODEL, MAX_SEQ_LENGTH, LORA_R, LORA_ALPHA, GRAD_ACCUM_STEPS
+    BASE_MODEL       = preset["base_model"]
+    MAX_SEQ_LENGTH   = preset["max_seq_length"]
+    LORA_R           = preset["lora_r"]
+    LORA_ALPHA       = preset["lora_alpha"]
+    GRAD_ACCUM_STEPS = preset["grad_accum"]
+    logger.info(f"Model preset: {args.model} → {BASE_MODEL} | seq={MAX_SEQ_LENGTH} | r={LORA_R} | grad_accum={GRAD_ACCUM_STEPS}")
 
     if args.export_only:
         if not args.checkpoint:
