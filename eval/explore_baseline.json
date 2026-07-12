@@ -1,0 +1,231 @@
+{
+  "label": "baseline",
+  "generated_at": "2026-06-18T15:27:24.796088+00:00",
+  "n_targets": 10,
+  "metrics": {
+    "states_discovered_total": 131,
+    "states_discovered_avg": 13.1,
+    "reachable_coverage": 0.6358,
+    "dedup_precision": 1.0
+  },
+  "per_target": [
+    {
+      "target_id": "saucedemo_flow",
+      "seed_url": "https://www.saucedemo.com/",
+      "expected_states_min": 6,
+      "states_discovered": 2,
+      "reachable_coverage": 0.4,
+      "dedup_precision": 1.0,
+      "diagnostics": {
+        "discovery_urls": 2,
+        "explored_pages": 3,
+        "explorer_state_changes": 2,
+        "flows": 9,
+        "expected_reachable": 5,
+        "reached": [
+          "/inventory.html",
+          "/inventory-item.html"
+        ],
+        "dedup_probe_n": 2,
+        "elapsed_s": 63.6
+      }
+    },
+    {
+      "target_id": "the_internet",
+      "seed_url": "https://the-internet.herokuapp.com/",
+      "expected_states_min": 12,
+      "states_discovered": 25,
+      "reachable_coverage": 0.625,
+      "dedup_precision": 1.0,
+      "diagnostics": {
+        "discovery_urls": 25,
+        "explored_pages": 25,
+        "explorer_state_changes": 0,
+        "flows": 34,
+        "expected_reachable": 8,
+        "reached": [
+          "/login",
+          "/dropdown",
+          "/checkboxes",
+          "/add_remove_elements/",
+          "/dynamic_loading"
+        ],
+        "dedup_probe_n": 3,
+        "elapsed_s": 247.8
+      }
+    },
+    {
+      "target_id": "realworld_conduit",
+      "seed_url": "https://realworld.habsida.net/",
+      "expected_states_min": 4,
+      "states_discovered": 1,
+      "reachable_coverage": 0.3333,
+      "dedup_precision": 1.0,
+      "diagnostics": {
+        "discovery_urls": 1,
+        "explored_pages": 1,
+        "explorer_state_changes": 0,
+        "flows": 0,
+        "expected_reachable": 3,
+        "reached": [
+          "/"
+        ],
+        "dedup_probe_n": 1,
+        "elapsed_s": 4.6
+      }
+    },
+    {
+      "target_id": "orangehrm",
+      "seed_url": "https://opensource-demo.orangehrmlive.com/",
+      "expected_states_min": 6,
+      "states_discovered": 1,
+      "reachable_coverage": 0.0,
+      "dedup_precision": 1.0,
+      "diagnostics": {
+        "discovery_urls": 1,
+        "explored_pages": 1,
+        "explorer_state_changes": 0,
+        "flows": 0,
+        "expected_reachable": 5,
+        "reached": [],
+        "dedup_probe_n": 1,
+        "elapsed_s": 18.6
+      }
+    },
+    {
+      "target_id": "parabank",
+      "seed_url": "https://parabank.parasoft.com/parabank/index.htm",
+      "expected_states_min": 6,
+      "states_discovered": 25,
+      "reachable_coverage": 1.0,
+      "dedup_precision": 1.0,
+      "diagnostics": {
+        "discovery_urls": 25,
+        "explored_pages": 4,
+        "explorer_state_changes": 0,
+        "flows": 39,
+        "expected_reachable": 5,
+        "reached": [
+          "/register.htm",
+          "/about.htm",
+          "/services.htm",
+          "/contact.htm",
+          "/admin.htm"
+        ],
+        "dedup_probe_n": 3,
+        "elapsed_s": 686.2
+      }
+    },
+    {
+      "target_id": "automationexercise",
+      "seed_url": "https://automationexercise.com/",
+      "expected_states_min": 7,
+      "states_discovered": 25,
+      "reachable_coverage": 1.0,
+      "dedup_precision": 1.0,
+      "diagnostics": {
+        "discovery_urls": 25,
+        "explored_pages": 5,
+        "explorer_state_changes": 3,
+        "flows": 0,
+        "expected_reachable": 6,
+        "reached": [
+          "/products",
+          "/view_cart",
+          "/login",
+          "/contact_us",
+          "/test_cases",
+          "/api_list"
+        ],
+        "dedup_probe_n": 3,
+        "elapsed_s": 679.5
+      }
+    },
+    {
+      "target_id": "demoqa_modals",
+      "seed_url": "https://demoqa.com/",
+      "expected_states_min": 6,
+      "states_discovered": 25,
+      "reachable_coverage": 1.0,
+      "dedup_precision": 1.0,
+      "diagnostics": {
+        "discovery_urls": 25,
+        "explored_pages": 5,
+        "explorer_state_changes": 0,
+        "flows": 34,
+        "expected_reachable": 6,
+        "reached": [
+          "/elements",
+          "/forms",
+          "/alertsWindows",
+          "/widgets",
+          "/interaction",
+          "/modal-dialogs"
+        ],
+        "dedup_probe_n": 3,
+        "elapsed_s": 267.2
+      }
+    },
+    {
+      "target_id": "todomvc_react",
+      "seed_url": "https://todomvc.com/examples/react/dist/",
+      "expected_states_min": 5,
+      "states_discovered": 24,
+      "reachable_coverage": 0.3333,
+      "dedup_precision": 1.0,
+      "diagnostics": {
+        "discovery_urls": 24,
+        "explored_pages": 9,
+        "explorer_state_changes": 5,
+        "flows": 18,
+        "expected_reachable": 3,
+        "reached": [
+          "/"
+        ],
+        "dedup_probe_n": 3,
+        "elapsed_s": 401.1
+      }
+    },
+    {
+      "target_id": "saucedemo_problem",
+      "seed_url": "https://www.saucedemo.com/",
+      "expected_states_min": 5,
+      "states_discovered": 2,
+      "reachable_coverage": 0.6667,
+      "dedup_precision": 1.0,
+      "diagnostics": {
+        "discovery_urls": 2,
+        "explored_pages": 3,
+        "explorer_state_changes": 2,
+        "flows": 9,
+        "expected_reachable": 3,
+        "reached": [
+          "/inventory.html",
+          "/inventory-item.html"
+        ],
+        "dedup_probe_n": 2,
+        "elapsed_s": 63.4
+      }
+    },
+    {
+      "target_id": "the_internet_dynamic",
+      "seed_url": "https://the-internet.herokuapp.com/dynamic_controls",
+      "expected_states_min": 4,
+      "states_discovered": 1,
+      "reachable_coverage": 1.0,
+      "dedup_precision": 1.0,
+      "diagnostics": {
+        "discovery_urls": 1,
+        "explored_pages": 1,
+        "explorer_state_changes": 0,
+        "flows": 0,
+        "expected_reachable": 1,
+        "reached": [
+          "/dynamic_controls"
+        ],
+        "dedup_probe_n": 1,
+        "elapsed_s": 8.3
+      }
+    }
+  ]
+}

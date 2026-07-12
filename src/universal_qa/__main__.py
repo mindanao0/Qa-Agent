@@ -23,6 +23,8 @@ def main() -> None:
                         help="Run browser in headless mode (default)")
     parser.add_argument("--no-headless", dest="headless", action="store_false",
                         help="Show browser window")
+    parser.add_argument("--detail-output", default=None,
+                        help="Write full per-test results JSON (for training-data collection)")
     args = parser.parse_args()
 
     agent = UniversalQAAgent(
@@ -38,6 +40,16 @@ def main() -> None:
 
     results = asyncio.run(agent.run())
     passed = sum(1 for r in results if r.passed)
+
+    if args.detail_output:
+        import pathlib
+        out = pathlib.Path(args.detail_output)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(
+            json.dumps([r.model_dump() for r in results], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
     print(json.dumps({
         "total": len(results),
         "passed": passed,

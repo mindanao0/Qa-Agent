@@ -1,30 +1,34 @@
 #!/usr/bin/env python3
 """
-WSL2 QLoRA trainer — 6 GB VRAM safe (UPDATE 4 specification).
+QLoRA trainer for qa-agent — 6 GB VRAM safe.
 
-This script is meant to run *inside* the WSL2 venv created by
-`scripts/setup_wsl2_cuda.sh` (not the Windows project venv).  It is independent
-of the async qa-agent runtime: only torch / unsloth / transformers / trl /
-datasets are required.
+NAME HISTORY: the "wsl2" in the filename is historical (born on Windows 11 + WSL2).
+The project now runs on native Ubuntu; this script runs in the dedicated venv at
+~/.qa-finetune-env (NOT the uv project venv). Only torch / unsloth / transformers /
+trl / datasets / peft / bitsandbytes are required.
 
-Key design choices vs. the Windows `trainer.py`:
+Key design choices:
 
-  * max_seq_length = 1024   (saves ~1 GB activation memory vs. 2048)
-  * LoRA r = 8, alpha = 16
-  * target_modules = ["q_proj", "v_proj"]   (minimal — fits in 6 GB)
-  * gradient_accumulation_steps = 8        (effective batch 8)
-  * fp16 = True                            (broader GPU support than bf16)
-  * Background VRAMWatchdog thread that polls torch.cuda.mem_get_info() and
-    forces a graceful stop if free VRAM drops below the critical threshold.
-  * Catastrophic-forgetting mitigation: ~10% general instruction-following
-    examples interleaved with the QA-specific examples (1-in-10 ratio).
-  * KeyboardInterrupt handler saves an emergency checkpoint before exit.
-  * --export-only mode: loads a checkpoint with FastLanguageModel and writes
-    GGUF Q4_K_M plus the Modelfile that `register_ollama_windows.ps1` consumes.
+  * 7B preset is the project mandate (never train a smaller model for real runs):
+    seq=384, LoRA r=4 on q/v only, grad_accum=16 — see MODEL_PRESETS["7b"].
+  * --cpu-offload: bitsandbytes + accelerate GPU↔CPU split — the only way 7B
+    trains on the GTX 1660 Ti (5.61 GiB usable). ~4 min/step; a 300-step run is
+    ~18-19 h. See load_model_for_training_cpu_offload for the three crash gotchas.
+  * --resume auto|PATH: continue from the last checkpoint. Mandatory workflow for
+    multi-hour runs on a desktop that gets power-cycled (the 2026-06-27 run died
+    at step 6/300 with nothing saved — SAVE_STEPS now defaults to 20).
+  * Background VRAMWatchdog polls torch.cuda.mem_get_info(); TWO consecutive
+    critical polls (JIT embed/lm_head copies cause one-poll transients) raise
+    SIGINT for a graceful stop, and the stop_reason is logged honestly.
+  * Catastrophic-forgetting mitigation: ~10% general examples interleaved.
+  * KeyboardInterrupt handler saves an emergency adapter before exit.
+  * --export-only: LEGACY unsloth GGUF export — loads all-on-GPU and OOMs by
+    ~34 MB with the GUI up. Prefer scripts/export_adapter_gguf.sh (CPU-only).
 
 CLI:
 
-    python3 wsl2_trainer.py --dataset PATH --output PATH [--max-steps N]
+    python3 wsl2_trainer.py --model 7b --cpu-offload --dataset PATH --output PATH \
+        [--max-steps N] [--resume auto|CKPT_DIR]
     python3 wsl2_trainer.py --export-only --checkpoint PATH --output PATH
 """
 
@@ -49,20 +53,85 @@ logging.basicConfig(
 )
 logger = logging.getLogger("wsl2_trainer")
 
-# ── Constants (6 GB safe) ────────────────────────────────────────────────────
-BASE_MODEL          = "unsloth/Qwen2.5-Coder-1.5B-Instruct-bnb-4bit"   # 7B fills all VRAM; 1.5B leaves ~4GB for compute
-MAX_SEQ_LENGTH      = 1024
-LORA_R              = 8
-LORA_ALPHA          = 16
+# ── Model presets ─────────────────────────────────────────────────────────────
+# Each preset tuned to fit inside 6 GB VRAM.
+MODEL_PRESETS: dict[str, dict] = {
+    "1.5b": {
+        "base_model":    "unsloth/Qwen2.5-Coder-1.5B-Instruct-bnb-4bit",
+        # hf_base: the un-quantized HF repo used ONLY by the --cpu-offload path
+        # (transformers quantizes it on the fly and can split layers GPU↔CPU; the
+        # pre-quantized unsloth bnb-4bit repos above cannot be CPU-offloaded cleanly).
+        "hf_base":       "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+        "max_seq_length": 1024,
+        "lora_r":         8,
+        "lora_alpha":     16,
+        "grad_accum":     8,
+    },
+    "3b": {
+        "base_model":    "unsloth/Qwen2.5-Coder-3B-Instruct-bnb-4bit",
+        "hf_base":       "Qwen/Qwen2.5-Coder-3B-Instruct",
+        "max_seq_length": 1024,
+        "lora_r":         8,
+        "lora_alpha":     16,
+        "grad_accum":     8,
+    },
+    "7b": {
+        "base_model":    "unsloth/Qwen2.5-Coder-7B-Instruct-bnb-4bit",
+        "hf_base":       "Qwen/Qwen2.5-Coder-7B-Instruct",
+        "max_seq_length": 384,   # 256→384 (2026-07-12): validated by the 20-step headless
+                                 # cpu-offload run at budget 2.9 — min free VRAM 0.83GB
+                                 # across ~2h, zero watchdog strikes, keeps 93.3% of the
+                                 # dataset vs 21.8% at 256 (p50=299 tok — see
+                                 # scripts/measure_seq_fit.py). The old 256 came from the
+                                 # 2026-06-27 GUI-up OOM at seq=512; headless training
+                                 # (GUI down) is what buys the activation headroom.
+                                 # FINETUNE_SEQ_LEN env still overrides for experiments,
+                                 # but NEVER resume a checkpoint across a seq change —
+                                 # prepare_dataset re-filters at the new length, so the
+                                 # resumed run silently trains on a different dataset.
+        "lora_r":         4,     # fewer trainable params → less optimizer VRAM
+        "lora_alpha":     8,
+        "grad_accum":     16,    # compensate for smaller seq_len
+    },
+}
+DEFAULT_MODEL_SIZE  = "7b"   # project mandate: 7B-only for real runs (1.5b/3b presets
+                             # kept for historical smoke tests — pass --model explicitly)
+
+# ── Runtime constants (filled in from preset at startup) ──────────────────────
+BASE_MODEL          = MODEL_PRESETS[DEFAULT_MODEL_SIZE]["base_model"]
+HF_BASE             = MODEL_PRESETS[DEFAULT_MODEL_SIZE]["hf_base"]
+MAX_SEQ_LENGTH      = MODEL_PRESETS[DEFAULT_MODEL_SIZE]["max_seq_length"]
+LORA_R              = MODEL_PRESETS[DEFAULT_MODEL_SIZE]["lora_r"]
+LORA_ALPHA          = MODEL_PRESETS[DEFAULT_MODEL_SIZE]["lora_alpha"]
 LORA_DROPOUT        = 0.0    # Unsloth recommendation for 4-bit
 TARGET_MODULES      = ["q_proj", "v_proj"]
 BATCH_SIZE          = 1
-GRAD_ACCUM_STEPS    = 8
+GRAD_ACCUM_STEPS    = MODEL_PRESETS[DEFAULT_MODEL_SIZE]["grad_accum"]
 DEFAULT_MAX_STEPS   = 300
+
+# ── CPU-offload path defaults ─────────────────────────────────────────────────
+# GPU VRAM ceiling for the decoder layers that stay on-GPU (embed_tokens + lm_head
+# are always CPU-offloaded). Fewer GPU layers → more headroom but slower steps.
+# MEASURED on the GTX 1660 Ti (5.61 GiB usable), 7B, seq=256, GUI up (2026-06-27):
+#   budget 4.5 (28/28 layers GPU) → trains but OOM-spikes by ~140 MB
+#   budget 3.2 (24/28 layers GPU) → trains 3 steps then a transient spike (24 MB
+#                                   free) tripped the watchdog; ~236 s/step
+# 2.9 (≈22/28 on GPU) trades ~2 more layers to CPU for the headroom those spikes
+# need. NOTE: each CPU layer + embed + lm_head is copied GPU↔CPU every step, so this
+# path is SLOW (~4 min/step here → a 300-step run ≈ ~20 h). It makes 7B *possible*
+# on 6 GB, not fast. Raise the budget for speed (risk OOM), lower it for stability.
+DEFAULT_GPU_BUDGET_GIB = 2.9
+# Budgets >3.2 are measured OOM-spike territory on this card (see table above);
+# main() clamps them back to the default unless FINETUNE_ALLOW_HIGH_BUDGET=1.
+GPU_BUDGET_SAFE_MAX    = 3.2
 LEARNING_RATE       = 2e-4
 WARMUP_STEPS        = 10
-LOG_STEPS           = 10
-SAVE_STEPS          = 50
+# LOG_STEPS: env wins; otherwise resolved in train() — 1 in cpu-offload mode
+# (~4 min/step, a line per step proves liveness in journalctl), 10 elsewhere.
+_LOG_STEPS_ENV      = os.environ.get("LOG_STEPS")
+# 20 steps ≈ 75 min between checkpoints in offload mode. Adapter checkpoints are
+# a few MB — cheap insurance on a desktop that gets power-cycled.
+SAVE_STEPS          = int(os.environ.get("SAVE_STEPS", "20"))
 
 VRAM_WARN_GB        = 0.15   # 150 MB free → warning (tighter — seq_len=512 uses less)
 VRAM_CRIT_GB        = 0.05   # 50 MB free → emergency stop (PyTorch OOM fires before this)
@@ -168,6 +237,7 @@ class VRAMWatchdog(threading.Thread):
         self.log_every_sec = log_every_sec
         self._stop_event = threading.Event()
         self._critical = False
+        self._crit_strikes = 0
 
     @property
     def critical(self) -> bool:
@@ -214,16 +284,29 @@ class VRAMWatchdog(threading.Thread):
                 last_log = now
 
             if free_gb < self.crit_gb and not self._critical:
-                self._critical = True
-                logger.critical(
-                    f"VRAM critical ({free_gb*1024:.0f} MB free < "
-                    f"{self.crit_gb*1024:.0f} MB) — requesting graceful stop"
-                )
-                try:
-                    os.kill(os.getpid(), signal.SIGINT)
-                except Exception as exc:
-                    logger.error(f"VRAMWatchdog: failed to raise SIGINT: {exc}")
-                # Stay alive so we keep logging until the trainer exits.
+                # The offload path JIT-copies embed/lm_head to the GPU each step —
+                # a single poll can catch that transient. Require 2 consecutive
+                # critical polls before stopping (real OOM fires from PyTorch first).
+                self._crit_strikes += 1
+                if self._crit_strikes >= 2:
+                    self._critical = True
+                    logger.critical(
+                        f"VRAM critical ({free_gb*1024:.0f} MB free < "
+                        f"{self.crit_gb*1024:.0f} MB, {self._crit_strikes} consecutive polls) "
+                        f"— requesting graceful stop (stop_reason=vram_critical)"
+                    )
+                    try:
+                        os.kill(os.getpid(), signal.SIGINT)
+                    except Exception as exc:
+                        logger.error(f"VRAMWatchdog: failed to raise SIGINT: {exc}")
+                    # Stay alive so we keep logging until the trainer exits.
+                else:
+                    logger.warning(
+                        f"VRAM below critical once ({free_gb*1024:.0f} MB free) — "
+                        f"waiting one more poll to rule out a JIT-copy transient"
+                    )
+            elif free_gb >= self.crit_gb and self._crit_strikes and not self._critical:
+                self._crit_strikes = 0
             elif free_gb < self.warn_gb and not warned:
                 logger.warning(
                     f"VRAM low ({free_gb*1024:.0f} MB free < "
@@ -352,9 +435,10 @@ def prepare_dataset(jsonl_path: Path, tokenizer: Any, max_seq_length: int) -> An
 
         formatted.append({"text": text})
 
+    kept_pct = 100.0 * len(formatted) / max(1, len(mixed))
     logger.info(
         f"Dataset prepared | total_in={len(mixed)} filtered_out={filtered_out} "
-        f"final={len(formatted)}"
+        f"final={len(formatted)} (kept {kept_pct:.1f}% at max_seq_length={max_seq_length})"
     )
     if not formatted:
         raise ValueError("All examples were filtered out — check max_seq_length")
@@ -409,6 +493,155 @@ def load_model_for_training() -> tuple[Any, Any]:
     return model, tokenizer
 
 
+def load_model_for_training_cpu_offload(
+    gpu_budget_gib: float = DEFAULT_GPU_BUDGET_GIB,
+) -> tuple[Any, Any]:
+    """
+    CPU-offload load path — for models whose 4-bit weights won't leave enough
+    VRAM headroom on this GPU to train all-on-device (e.g. 7B on a 6 GB card).
+
+    Unsloth is NOT used here: it requires the whole model on one GPU and has no
+    partial-CPU-offload mode. Instead we quantize the *un-quantized* HF base on
+    the fly with bitsandbytes and let accelerate's device_map="auto" place as many
+    layers on the GPU as fit under ``gpu_budget_gib`` and spill the rest to CPU RAM
+    (kept fp32 via llm_int8_enable_fp32_cpu_offload). The offloaded layers run their
+    forward/backward on CPU each step — correct, but several× slower than all-GPU.
+
+    NOTE: this downloads the full fp16 HF base (~15 GB for 7B) on first use; the
+    pre-quantized unsloth bnb-4bit repo cannot be CPU-offloaded cleanly.
+    """
+    import torch
+    from transformers import (  # type: ignore[import-not-found]
+        AutoConfig,
+        AutoModelForCausalLM,
+        AutoTokenizer,
+        BitsAndBytesConfig,
+    )
+    from peft import (  # type: ignore[import-not-found]
+        LoraConfig,
+        get_peft_model,
+    )
+
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.float16,
+        # MUST stay False with CPU offload: double-quant adds a nested `offset`
+        # tensor to each layer's quant_state. When accelerate dispatches an
+        # offloaded layer it walks state_dict() → bitsandbytes calls offset.item(),
+        # but the offloaded offset is a *meta* tensor → "Tensor.item() cannot be
+        # called on meta tensors" (verified crash 2026-06-27). It only saves ~0.4GB.
+        bnb_4bit_use_double_quant=False,
+        # allow the 4-bit model to keep overflow layers on CPU instead of
+        # refusing to dispatch — this is what makes the GPU↔CPU split legal.
+        llm_int8_enable_fp32_cpu_offload=True,
+    )
+
+    # Explicit device_map instead of "auto" + max_memory. The two un-quantized fp16
+    # weights — embed_tokens and lm_head (~1.1GB each) — are the VRAM hogs. accelerate
+    # offload does NOT run an offloaded module on CPU; it copies the weight to the GPU
+    # just-in-time for that module's forward, then evicts it. So an offloaded module
+    # still needs ~its size free on the GPU while it runs — but embed (start of fwd)
+    # and lm_head (end of fwd) execute at different times, so only ONE of them is on
+    # the GPU at a peak (~1.1GB), and loss is still computed on CUDA (lm_head runs on
+    # GPU after copy-in → fp16 GradScaler is happy). Offloading BOTH frees ~2.2GB of
+    # permanent residency, leaving room for the JIT copy + activations. The 4-bit
+    # decoder layers (bulk of compute, ~0.13GB each) stay GPU-pinned; gpu_budget_gib
+    # caps how many fit (rest spill to CPU, slower). At 4.5 all 28 layers stay on GPU.
+    cfg = AutoConfig.from_pretrained(HF_BASE)
+    n_layers = int(getattr(cfg, "num_hidden_layers", 28))
+    _GIB_PER_LAYER = 0.13   # ~4-bit footprint of one Qwen-7B decoder block
+    max_gpu_layers = max(0, int(gpu_budget_gib / _GIB_PER_LAYER))
+    layers_on_gpu = min(n_layers, max_gpu_layers)
+
+    device_map: dict[str, Any] = {
+        "model.embed_tokens": "cpu",
+        "lm_head": "cpu",
+        "model.norm": 0,
+        "model.rotary_emb": 0,
+    }
+    for i in range(n_layers):
+        device_map[f"model.layers.{i}"] = 0 if i < layers_on_gpu else "cpu"
+
+    logger.info(
+        f"[cpu-offload] loading {HF_BASE} (4-bit, explicit map: embed+lm_head→CPU "
+        f"(JIT-copied to GPU per step), {layers_on_gpu}/{n_layers} decoder layers→GPU, "
+        f"rest→CPU; gpu_budget={gpu_budget_gib}GiB) — first run downloads fp16 base (~15GB)"
+    )
+    model = AutoModelForCausalLM.from_pretrained(
+        HF_BASE,
+        quantization_config=bnb_config,
+        device_map=device_map,
+        torch_dtype=torch.float16,
+        trust_remote_code=False,
+    )
+
+    devmap = getattr(model, "hf_device_map", {}) or {}
+    on_cpu = sum(1 for d in devmap.values() if d in ("cpu", "disk"))
+    on_gpu = sum(1 for d in devmap.values() if d not in ("cpu", "disk"))
+    logger.info(
+        f"[cpu-offload] device split — {on_gpu} module(s) on GPU, {on_cpu} on CPU/disk "
+        f"({layers_on_gpu}/{n_layers} decoder layers on GPU)"
+    )
+
+    # Minimal k-bit prep WITHOUT peft.prepare_model_for_kbit_training's blanket
+    # fp32 upcast — that upcast is what turned embed_tokens/lm_head (~1.1GB fp16)
+    # into ~2GB fp32 and OOM'd the GPU. We only need: (1) freeze the base, (2) upcast
+    # the tiny LayerNorms to fp32 for training stability, (3) gradient checkpointing,
+    # (4) input grads so checkpointing has something to backprop into.
+    model.config.use_cache = False
+    for _p in model.parameters():
+        _p.requires_grad = False
+    _norms_upcast = 0
+    for _name, _mod in model.named_modules():
+        if "norm" in _name.lower():
+            _w = getattr(_mod, "weight", None)
+            if _w is not None and _w.dtype in (torch.float16, torch.bfloat16):
+                _mod.weight.data = _mod.weight.data.to(torch.float32)
+                _norms_upcast += 1
+    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+    model.enable_input_require_grads()
+    logger.info(
+        f"[cpu-offload] minimal k-bit prep done (upcast {_norms_upcast} LayerNorms to "
+        "fp32; embed/lm_head left fp16 to avoid the 2GB GPU OOM)"
+    )
+
+    # Restrict LoRA to the GPU-resident decoder layers. accelerate keeps an
+    # offloaded layer's weights on the `meta` device between forwards; a trainable
+    # LoRA adapter on such a layer makes autograd return a cuda:0 gradient for a
+    # meta-device param → "MmBackward0 returned an invalid gradient ... expected
+    # device meta but got cuda:0" (verified crash 2026-06-27). Offloaded layers run
+    # frozen (base only, no adapter) so gradient just flows through them.
+    layers_to_transform = (
+        list(range(layers_on_gpu)) if layers_on_gpu < n_layers else None
+    )
+    logger.info(
+        f"[cpu-offload] applying LoRA (r={LORA_R}, alpha={LORA_ALPHA}, modules={TARGET_MODULES}, "
+        f"layers={'all' if layers_to_transform is None else f'0..{layers_on_gpu-1} (GPU-resident only)'})"
+    )
+    lora_config = LoraConfig(
+        r=LORA_R,
+        lora_alpha=LORA_ALPHA,
+        lora_dropout=LORA_DROPOUT,
+        target_modules=TARGET_MODULES,
+        layers_to_transform=layers_to_transform,
+        bias="none",
+        task_type="CAUSAL_LM",
+    )
+    model = get_peft_model(model, lora_config)
+    model.print_trainable_parameters()
+
+    tokenizer = AutoTokenizer.from_pretrained(HF_BASE)
+    _eos_id = tokenizer.convert_tokens_to_ids("<|im_end|>")
+    tokenizer.eos_token = "<|im_end|>"
+    tokenizer.eos_token_id = _eos_id
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    logger.info(f"[cpu-offload] EOS=<|im_end|>→{_eos_id}; pad_token={tokenizer.pad_token}")
+
+    return model, tokenizer
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Training
 # ═════════════════════════════════════════════════════════════════════════════
@@ -418,9 +651,17 @@ def train(
     dataset_path: Path,
     output_dir: Path,
     max_steps: int = DEFAULT_MAX_STEPS,
+    cpu_offload: bool = False,
+    gpu_budget_gib: float = DEFAULT_GPU_BUDGET_GIB,
+    resume: str | None = None,
 ) -> Path:
     """
     Full WSL2-safe training run.
+
+    When ``cpu_offload`` is True the model is loaded via the bitsandbytes +
+    accelerate GPU↔CPU split path (load_model_for_training_cpu_offload) instead
+    of unsloth — slower per step, but fits models whose 4-bit weights would
+    otherwise leave no VRAM headroom for the backward pass.
 
     Returns the path of the final checkpoint directory.
     """
@@ -431,10 +672,49 @@ def train(
     output_dir = output_dir.expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # ── Resume resolution — fail fast BEFORE any heavy loading ───────────────
+    from transformers.trainer_utils import get_last_checkpoint  # type: ignore[import-not-found]
+
+    last_ckpt = get_last_checkpoint(str(output_dir))
+    resume_from: str | None = None
+    if resume:
+        if resume == "auto":
+            if last_ckpt is None:
+                logger.warning(f"--resume auto: no checkpoint in {output_dir} — starting fresh")
+            else:
+                resume_from = last_ckpt
+        else:
+            ckpt = Path(resume).expanduser()
+            if not (ckpt / "trainer_state.json").exists():
+                raise FileNotFoundError(
+                    f"--resume {resume}: not a trainer checkpoint (missing trainer_state.json)"
+                )
+            resume_from = str(ckpt)
+        if resume_from:
+            state = json.loads(
+                (Path(resume_from) / "trainer_state.json").read_text(encoding="utf-8")
+            )
+            done_steps = int(state.get("global_step", 0))
+            if done_steps >= max_steps:
+                raise ValueError(
+                    f"Checkpoint {resume_from} is already at step {done_steps} >= "
+                    f"max_steps={max_steps} — raise --max-steps or start a fresh output dir"
+                )
+            logger.info(f"Resuming from {resume_from} (step {done_steps}/{max_steps})")
+    elif last_ckpt is not None:
+        raise ValueError(
+            f"Found existing checkpoint {last_ckpt} but --resume was not given. "
+            f"Pass --resume auto to continue it, or move the checkpoint-* dirs aside to "
+            f"start fresh (otherwise save_total_limit rotation would silently delete them)."
+        )
+
     watchdog = VRAMWatchdog()
     watchdog.start()
 
-    model, tokenizer = load_model_for_training()
+    if cpu_offload:
+        model, tokenizer = load_model_for_training_cpu_offload(gpu_budget_gib)
+    else:
+        model, tokenizer = load_model_for_training()
 
     # Tokenize the pre-formatted "text" dataset for the standard Trainer.
     # Using Trainer instead of SFTTrainer avoids Unsloth's <EOS_TOKEN> injection issue.
@@ -450,46 +730,85 @@ def train(
         out["labels"] = out["input_ids"].copy()
         return out
 
+    # num_proc=1: map() with num_proc>1 forks a CUDA-initialized, watchdog-threaded
+    # parent — a known intermittent-hang class. The dataset is small (~1 s anyway).
     tokenized = raw_dataset.map(
-        tokenize_fn, batched=True, remove_columns=["text"], num_proc=2,
+        tokenize_fn, batched=True, remove_columns=["text"], num_proc=1,
     )
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
     class _StepLogger(TrainerCallback):
-        def on_log(self_inner, args, state, control, logs=None, **kw):  # noqa: N805
+        """Per-log line with loss, VRAM, measured s/step and ETA (resume-aware)."""
+
+        def __init__(self) -> None:
+            self._t0: float | None = None
+            self._step0 = 0
+
+        def on_log(self, args, state, control, logs=None, **kw):
             if not logs:
                 return
             loss = logs.get("loss")
             if loss is None:
                 return
+            now = time.monotonic()
+            if self._t0 is None:
+                # Baseline at the first logged step so model-load time and the
+                # resume offset don't pollute the s/step estimate.
+                self._t0, self._step0 = now, state.global_step
+                eta_msg = "ETA: measuring"
+            else:
+                done = state.global_step - self._step0
+                if done > 0:
+                    per_step = (now - self._t0) / done
+                    remain_s = int(per_step * max(0, max_steps - state.global_step))
+                    eta_msg = (
+                        f"{per_step:.0f}s/step | "
+                        f"ETA {remain_s // 3600}h{(remain_s % 3600) // 60:02d}m"
+                    )
+                else:
+                    eta_msg = "ETA: measuring"
             try:
                 import torch
                 free_b, _ = torch.cuda.mem_get_info()
                 total_b   = torch.cuda.get_device_properties(0).total_memory
-                vram_used = (total_b - free_b) / 1e9
-                vram_msg = f"{vram_used:.1f}GB"
+                vram_msg  = f"{(total_b - free_b) / 1e9:.1f}GB"
             except Exception:
                 vram_msg = "?"
             logger.info(
                 f"Step {state.global_step}/{max_steps} | "
-                f"Loss: {loss:.4f} | VRAM: {vram_msg}"
+                f"Loss: {loss:.4f} | VRAM: {vram_msg} | {eta_msg}"
             )
+
+    if _LOG_STEPS_ENV is not None:
+        log_steps = int(_LOG_STEPS_ENV)
+    else:
+        # Offload steps take ~4 min each — a line per step keeps journalctl alive.
+        log_steps = 1 if cpu_offload else 10
 
     training_args = TrainingArguments(
         output_dir=str(output_dir),
-        per_device_train_batch_size=BATCH_SIZE,
-        gradient_accumulation_steps=GRAD_ACCUM_STEPS,
+        per_device_train_batch_size=1,
+        gradient_accumulation_steps=GRAD_ACCUM_STEPS if cpu_offload else 2,
+        # In the offload path prepare_model_for_kbit_training already enabled
+        # gradient checkpointing (with use_reentrant=False); enabling it again here
+        # would double-wrap. The unsloth path enables it via get_peft_model instead.
+        gradient_checkpointing=False if cpu_offload else True,
         warmup_steps=WARMUP_STEPS,
         max_steps=max_steps,
         learning_rate=LEARNING_RATE,
         fp16=True,
-        logging_steps=LOG_STEPS,
+        logging_steps=log_steps,
         save_steps=SAVE_STEPS,
         save_total_limit=3,
         lr_scheduler_type="cosine",
-        optim="adamw_8bit",
+        # paged_adamw_8bit pages optimizer state to host RAM under VRAM pressure —
+        # the right choice for the already-tight offload path; adamw_8bit elsewhere.
+        optim="paged_adamw_8bit" if cpu_offload else "adamw_8bit",
         seed=42,
         report_to="none",
+        # tqdm's \r-updates are noise in journald/tee'd log files; the per-step
+        # logger line replaces it in offload mode.
+        disable_tqdm=cpu_offload,
     )
 
     trainer = Trainer(
@@ -501,17 +820,28 @@ def train(
     )
 
     final_dir = output_dir / "final"
-    logger.info(f"Starting training (max_steps={max_steps}) — checkpoints to {output_dir}")
+    logger.info(
+        f"Starting training (max_steps={max_steps}, "
+        f"resume={resume_from if resume_from else 'fresh'}) — "
+        f"checkpoints to {output_dir} every {SAVE_STEPS} steps"
+    )
     try:
-        stats = trainer.train()
+        stats = trainer.train(resume_from_checkpoint=resume_from)
         logger.info(
             f"Training complete | loss={stats.training_loss:.4f} "
             f"steps={stats.global_step}"
         )
     except KeyboardInterrupt:
+        # Honest stop reason: the watchdog raises SIGINT too — don't blame the user.
+        reason = (
+            "vram_critical (watchdog)" if watchdog.critical
+            else "user_interrupt (SIGINT/Ctrl+C/systemctl stop)"
+        )
         emergency_dir = output_dir / "emergency"
         logger.warning(
-            f"KeyboardInterrupt received — saving emergency checkpoint to {emergency_dir}"
+            f"Training stopped early — stop_reason={reason}; saving emergency adapter "
+            f"to {emergency_dir} (to CONTINUE training, use the checkpoint-* dirs via "
+            f"--resume auto — the emergency save is adapter-only, not resumable)"
         )
         emergency_dir.mkdir(parents=True, exist_ok=True)
         try:
@@ -565,11 +895,19 @@ def export_gguf(checkpoint_dir: Path, output_dir: Path) -> Path:
         quantization_method=GGUF_QUANT_METHOD,
     )
 
-    # Locate the produced .gguf file (Unsloth name varies by version) and
-    # normalise to qa-agent-coder-q4_k_m.gguf so the Ollama Modelfile is stable.
+    # Unsloth may save to output_dir or output_dir_gguf depending on version.
+    # Check both and move files to output_dir so callers have a stable location.
+    gguf_sibling = Path(str(output_dir) + "_gguf")
+    if gguf_sibling.exists():
+        import shutil as _shutil
+        for f in gguf_sibling.iterdir():
+            dest = output_dir / f.name
+            if not dest.exists():
+                _shutil.move(str(f), str(dest))
+                logger.info(f"Moved {f.name} from _gguf dir → {output_dir}")
     candidates = sorted(output_dir.glob("*.gguf"))
     if not candidates:
-        raise RuntimeError(f"No .gguf file produced in {output_dir}")
+        raise RuntimeError(f"No .gguf file produced in {output_dir} or {gguf_sibling}")
     final_gguf = output_dir / GGUF_FILE_NAME
     if candidates[0].name != GGUF_FILE_NAME:
         try:
@@ -607,8 +945,25 @@ def _build_parser() -> argparse.ArgumentParser:
                              "GGUF dir during export)")
     parser.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS,
                         help="Total training steps (default 300)")
+    parser.add_argument("--model", type=str, default=DEFAULT_MODEL_SIZE,
+                        choices=list(MODEL_PRESETS.keys()),
+                        help="Model size preset (default 7b — the project mandate; "
+                             "1.5b/3b exist only for historical smoke tests)")
+    parser.add_argument("--cpu-offload", action="store_true",
+                        help="Train via bitsandbytes+accelerate GPU↔CPU split (no unsloth). "
+                             "Fits 7B on a 6GB card by spilling layers to CPU RAM; "
+                             "several× slower per step. Downloads the full fp16 base on first use.")
+    parser.add_argument("--gpu-budget-gib", type=float, default=DEFAULT_GPU_BUDGET_GIB,
+                        help=f"[--cpu-offload] VRAM ceiling for layer placement "
+                             f"(default {DEFAULT_GPU_BUDGET_GIB}; raise for speed, lower if OOM)")
+    parser.add_argument("--resume", type=str, default=None,
+                        help="Resume training: 'auto' = latest checkpoint-* in --output, "
+                             "or an explicit checkpoint dir. Without this flag a run "
+                             "REFUSES to start if checkpoints already exist in --output "
+                             "(protects them from save_total_limit rotation).")
     parser.add_argument("--export-only", action="store_true",
-                        help="Skip training, only export an existing checkpoint to GGUF")
+                        help="Skip training, only export an existing checkpoint to GGUF "
+                             "(LEGACY all-on-GPU path — prefer scripts/export_adapter_gguf.sh)")
     parser.add_argument("--checkpoint", type=str, default=None,
                         help="[--export-only] Path to the trained checkpoint")
     return parser
@@ -617,6 +972,26 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = _build_parser().parse_args()
     out  = Path(args.output).expanduser()
+
+    # Apply model preset — mutates module-level globals so all functions pick it up
+    preset = MODEL_PRESETS[args.model]
+    global BASE_MODEL, HF_BASE, MAX_SEQ_LENGTH, LORA_R, LORA_ALPHA, GRAD_ACCUM_STEPS
+    BASE_MODEL       = preset["base_model"]
+    HF_BASE          = preset["hf_base"]
+    MAX_SEQ_LENGTH   = preset["max_seq_length"]
+    LORA_R           = preset["lora_r"]
+    LORA_ALPHA       = preset["lora_alpha"]
+    GRAD_ACCUM_STEPS = preset["grad_accum"]
+    # Seq-length experiment knob (measured 2026-07-12 on the deduped dataset:
+    # seq=256 keeps only 21.8%, 320→67.2%, 384→92.6%). Longer seq costs
+    # activation VRAM — validate with a short run before a long one.
+    _seq_env = os.environ.get("FINETUNE_SEQ_LEN")
+    if _seq_env:
+        MAX_SEQ_LENGTH = int(_seq_env)
+        logger.info(f"MAX_SEQ_LENGTH overridden via FINETUNE_SEQ_LEN → {MAX_SEQ_LENGTH}")
+    logger.info(f"Model preset: {args.model} → {BASE_MODEL} | seq={MAX_SEQ_LENGTH} | r={LORA_R} | grad_accum={GRAD_ACCUM_STEPS}")
+    if args.cpu_offload:
+        logger.info(f"CPU-offload ENABLED → base={HF_BASE} | gpu_budget={args.gpu_budget_gib}GiB")
 
     if args.export_only:
         if not args.checkpoint:
@@ -629,10 +1004,30 @@ def main() -> int:
         logger.error("--dataset is required for training (omit --export-only for that)")
         return 2
 
+    gpu_budget = args.gpu_budget_gib
+    if (
+        args.cpu_offload
+        and gpu_budget > GPU_BUDGET_SAFE_MAX
+        and os.environ.get("FINETUNE_ALLOW_HIGH_BUDGET") != "1"
+    ):
+        logger.warning(
+            f"--gpu-budget-gib {gpu_budget} > {GPU_BUDGET_SAFE_MAX}: measured OOM-spike "
+            f"territory on this card (2026-06-27: 4.5 → free dipped to 0.41GB; 3.2 → "
+            f"watchdog trip) and barely faster (~222 vs ~236 s/step). Clamping to "
+            f"{DEFAULT_GPU_BUDGET_GIB} — set FINETUNE_ALLOW_HIGH_BUDGET=1 to override."
+        )
+        gpu_budget = DEFAULT_GPU_BUDGET_GIB
+
     try:
-        train(Path(args.dataset), out, max_steps=args.max_steps)
+        train(
+            Path(args.dataset), out,
+            max_steps=args.max_steps,
+            cpu_offload=args.cpu_offload,
+            gpu_budget_gib=gpu_budget,
+            resume=args.resume,
+        )
     except KeyboardInterrupt:
-        logger.warning("Training interrupted by user")
+        logger.warning("Training interrupted (stop_reason logged above by the trainer)")
         return 130
     except Exception as exc:
         logger.exception(f"Training failed: {exc}")

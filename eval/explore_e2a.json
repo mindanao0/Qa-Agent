@@ -1,0 +1,263 @@
+{
+  "label": "optionA_scanner",
+  "generated_at": "2026-06-19T16:40:58.813103+00:00",
+  "n_targets": 10,
+  "metrics": {
+    "states_discovered_total": 117,
+    "states_discovered_avg": 11.7,
+    "reachable_coverage": 0.685,
+    "dedup_precision": 1.0
+  },
+  "per_target": [
+    {
+      "target_id": "saucedemo_flow",
+      "seed_url": "https://www.saucedemo.com/",
+      "expected_states_min": 6,
+      "states_discovered": 6,
+      "reachable_coverage": 0.6,
+      "dedup_precision": 1.0,
+      "diagnostics": {
+        "edges": 9,
+        "clicks": 69,
+        "click_fail": 16,
+        "healed_l1": 0,
+        "blocked": 6,
+        "dedup_hits": 66,
+        "observations": 72,
+        "expected_reachable": 5,
+        "reached": [
+          "/inventory.html",
+          "/inventory-item.html",
+          "/cart.html"
+        ],
+        "dedup_probe_n": 3,
+        "elapsed_s": 210.2
+      }
+    },
+    {
+      "target_id": "the_internet",
+      "seed_url": "https://the-internet.herokuapp.com/",
+      "expected_states_min": 12,
+      "states_discovered": 42,
+      "reachable_coverage": 0.75,
+      "dedup_precision": 1.0,
+      "diagnostics": {
+        "edges": 43,
+        "clicks": 97,
+        "click_fail": 11,
+        "healed_l1": 0,
+        "blocked": 3,
+        "dedup_hits": 84,
+        "observations": 126,
+        "expected_reachable": 8,
+        "reached": [
+          "/login",
+          "/dropdown",
+          "/checkboxes",
+          "/dynamic_loading",
+          "/javascript_alerts",
+          "/windows"
+        ],
+        "dedup_probe_n": 3,
+        "elapsed_s": 205.3
+      }
+    },
+    {
+      "target_id": "realworld_conduit",
+      "seed_url": "https://realworld.habsida.net/",
+      "expected_states_min": 4,
+      "states_discovered": 1,
+      "reachable_coverage": 0.3333,
+      "dedup_precision": 1.0,
+      "diagnostics": {
+        "edges": 0,
+        "clicks": 0,
+        "click_fail": 0,
+        "healed_l1": 0,
+        "blocked": 0,
+        "dedup_hits": 1,
+        "observations": 2,
+        "expected_reachable": 3,
+        "reached": [
+          "/"
+        ],
+        "dedup_probe_n": 1,
+        "elapsed_s": 5.9
+      }
+    },
+    {
+      "target_id": "orangehrm",
+      "seed_url": "https://opensource-demo.orangehrmlive.com/",
+      "expected_states_min": 6,
+      "states_discovered": 2,
+      "reachable_coverage": 0.0,
+      "dedup_precision": 1.0,
+      "diagnostics": {
+        "edges": 0,
+        "clicks": 0,
+        "click_fail": 0,
+        "healed_l1": 0,
+        "blocked": 0,
+        "dedup_hits": 0,
+        "observations": 2,
+        "expected_reachable": 5,
+        "reached": [],
+        "dedup_probe_n": 2,
+        "elapsed_s": 11.5
+      }
+    },
+    {
+      "target_id": "parabank",
+      "seed_url": "https://parabank.parasoft.com/parabank/index.htm",
+      "expected_states_min": 6,
+      "states_discovered": 14,
+      "reachable_coverage": 1.0,
+      "dedup_precision": 1.0,
+      "diagnostics": {
+        "edges": 42,
+        "clicks": 102,
+        "click_fail": 12,
+        "healed_l1": 0,
+        "blocked": 5,
+        "dedup_hits": 106,
+        "observations": 120,
+        "expected_reachable": 5,
+        "reached": [
+          "/register.htm",
+          "/about.htm",
+          "/services.htm",
+          "/contact.htm",
+          "/admin.htm"
+        ],
+        "dedup_probe_n": 3,
+        "elapsed_s": 234.5
+      }
+    },
+    {
+      "target_id": "automationexercise",
+      "seed_url": "https://automationexercise.com/",
+      "expected_states_min": 7,
+      "states_discovered": 17,
+      "reachable_coverage": 1.0,
+      "dedup_precision": 1.0,
+      "diagnostics": {
+        "edges": 17,
+        "clicks": 35,
+        "click_fail": 10,
+        "healed_l1": 0,
+        "blocked": 0,
+        "dedup_hits": 45,
+        "observations": 62,
+        "expected_reachable": 6,
+        "reached": [
+          "/products",
+          "/view_cart",
+          "/login",
+          "/contact_us",
+          "/test_cases",
+          "/api_list"
+        ],
+        "dedup_probe_n": 3,
+        "elapsed_s": 197.0
+      }
+    },
+    {
+      "target_id": "demoqa_modals",
+      "seed_url": "https://demoqa.com/",
+      "expected_states_min": 6,
+      "states_discovered": 16,
+      "reachable_coverage": 0.8333,
+      "dedup_precision": 1.0,
+      "diagnostics": {
+        "edges": 16,
+        "clicks": 79,
+        "click_fail": 25,
+        "healed_l1": 0,
+        "blocked": 0,
+        "dedup_hits": 48,
+        "observations": 64,
+        "expected_reachable": 6,
+        "reached": [
+          "/elements",
+          "/forms",
+          "/alertsWindows",
+          "/widgets",
+          "/interaction"
+        ],
+        "dedup_probe_n": 3,
+        "elapsed_s": 310.1
+      }
+    },
+    {
+      "target_id": "todomvc_react",
+      "seed_url": "https://todomvc.com/examples/react/dist/",
+      "expected_states_min": 5,
+      "states_discovered": 13,
+      "reachable_coverage": 0.3333,
+      "dedup_precision": 1.0,
+      "diagnostics": {
+        "edges": 12,
+        "clicks": 97,
+        "click_fail": 39,
+        "healed_l1": 0,
+        "blocked": 0,
+        "dedup_hits": 63,
+        "observations": 76,
+        "expected_reachable": 3,
+        "reached": [
+          "/"
+        ],
+        "dedup_probe_n": 3,
+        "elapsed_s": 424.0
+      }
+    },
+    {
+      "target_id": "saucedemo_problem",
+      "seed_url": "https://www.saucedemo.com/",
+      "expected_states_min": 5,
+      "states_discovered": 5,
+      "reachable_coverage": 1.0,
+      "dedup_precision": 1.0,
+      "diagnostics": {
+        "edges": 12,
+        "clicks": 98,
+        "click_fail": 16,
+        "healed_l1": 0,
+        "blocked": 6,
+        "dedup_hits": 96,
+        "observations": 101,
+        "expected_reachable": 3,
+        "reached": [
+          "/inventory.html",
+          "/cart.html",
+          "/inventory-item.html"
+        ],
+        "dedup_probe_n": 3,
+        "elapsed_s": 238.6
+      }
+    },
+    {
+      "target_id": "the_internet_dynamic",
+      "seed_url": "https://the-internet.herokuapp.com/dynamic_controls",
+      "expected_states_min": 4,
+      "states_discovered": 1,
+      "reachable_coverage": 1.0,
+      "dedup_precision": 1.0,
+      "diagnostics": {
+        "edges": 0,
+        "clicks": 5,
+        "click_fail": 2,
+        "healed_l1": 0,
+        "blocked": 1,
+        "dedup_hits": 9,
+        "observations": 10,
+        "expected_reachable": 1,
+        "reached": [
+          "/dynamic_controls"
+        ],
+        "dedup_probe_n": 1,
+        "elapsed_s": 35.4
+      }
+    }
+  ]
+}

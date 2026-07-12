@@ -177,13 +177,14 @@ class UniversalTestPlanner:
         edge = await self._plan_from_pages_edge(nav_map)
         flows = self._plan_flows(nav_map.flows)
         form_val = self._plan_form_validation(nav_map.pages)
+        boundary = self._plan_boundary(nav_map.pages)
         broken = self._plan_broken_link(nav_map.pages, nav_map.base_url)
         error_pg = self._plan_error_page(nav_map.base_url)
         search = self._plan_search(nav_map.pages)
         logout = self._plan_logout_flow(nav_map.pages, nav_map.base_url)
         return self._sort_by_priority(
             per_page + functional + negative + edge + flows +
-            form_val + broken + error_pg + search + logout
+            form_val + boundary + broken + error_pg + search + logout
         )
 
     def _plan_form_validation(self, pages: list[ExploredPage]) -> list[TestCase]:
@@ -215,6 +216,63 @@ class UniversalTestPlanner:
                     'verify text: "invalid"',
                 ],
                 expected_outcome="แสดง error สำหรับ email format ไม่ถูกต้อง",
+                source_url=page.url,
+            ))
+        return results
+
+    def _plan_boundary(self, pages: list[ExploredPage]) -> list[TestCase]:
+        """Deterministic (no-LLM) boundary + input-validation cases for form/input pages."""
+        results: list[TestCase] = []
+        form_pages = [
+            p for p in pages
+            if "form" in (p.pam_content or "").lower()
+            or "input" in (p.pam_content or "").lower()
+            or "textbox" in (p.pam_content or "").lower()
+        ]
+        _long_value = "A" * 300  # 300 chars > 256 boundary
+        for page in form_pages[:5]:
+            # 1. Very long input
+            results.append(TestCase(
+                title=f"Boundary — very long input: {page.title or page.url}",
+                type="boundary",
+                priority="medium",
+                preconditions=[f"อยู่ที่หน้า {page.url}"],
+                steps=[
+                    f"navigate to {page.url}",
+                    f'fill "Name" with "{_long_value}"',
+                    'click "Submit"',
+                    'verify text: "error"',
+                ],
+                expected_outcome="ระบบจัดการ input ที่ยาวเกิน 256 ตัวอักษรได้อย่างเหมาะสม โดยไม่ crash หรือแสดง validation error",
+                source_url=page.url,
+            ))
+            # 2. Special / unicode characters
+            results.append(TestCase(
+                title=f"Boundary — special/unicode characters: {page.title or page.url}",
+                type="boundary",
+                priority="medium",
+                preconditions=[f"อยู่ที่หน้า {page.url}"],
+                steps=[
+                    f"navigate to {page.url}",
+                    'fill "Name" with "!@#$%^&*()_+ 测试 😀"',
+                    'click "Submit"',
+                ],
+                expected_outcome="ระบบรับอักขระพิเศษและ unicode ได้โดยไม่ crash",
+                source_url=page.url,
+            ))
+            # 3. Whitespace-only input
+            results.append(TestCase(
+                title=f"Boundary — whitespace-only input: {page.title or page.url}",
+                type="boundary",
+                priority="low",
+                preconditions=[f"อยู่ที่หน้า {page.url}"],
+                steps=[
+                    f"navigate to {page.url}",
+                    'fill "Name" with "   "',
+                    'click "Submit"',
+                    'verify text: "required"',
+                ],
+                expected_outcome="ระบบถือว่า input ที่มีแต่ช่องว่างเป็นค่าว่าง และแสดง validation error",
                 source_url=page.url,
             ))
         return results
@@ -312,8 +370,8 @@ class UniversalTestPlanner:
                 a.action_label for a in page.actions[:10] if not a.is_destructive
             ) or "ไม่พบ action"
             prompt = (
-                f"คุณเป็น QA Engineer กรุณาเขียน test case 2-3 ข้อ "
-                f"(อย่างน้อย 1 happy-path และ 1 negative) "
+                f"คุณเป็น QA Engineer กรุณาเขียน test case 3-4 ข้อ "
+                f"(อย่างน้อย 2 happy-path และ 1 negative ที่ครอบคลุม action ต่างกัน) "
                 f"สำหรับหน้าเว็บนี้ในรูปแบบ JSON **ตอบเป็นภาษาไทยทั้งหมด**\n\n"
                 f"{login_note}"
                 f"URL ของหน้านี้: {page.url}\n"
@@ -391,7 +449,8 @@ class UniversalTestPlanner:
                 a.action_label for a in page.actions[:10] if not a.is_destructive
             ) or "ไม่พบ action"
             prompt = (
-                f"คุณเป็น QA Engineer กรุณาเขียน negative test case 2-3 ข้อ "
+                f"คุณเป็น QA Engineer กรุณาเขียน negative test case 3-4 ข้อ "
+                f"(ครอบคลุมหลายรูปแบบความผิดพลาดที่ต่างกัน) "
                 f"สำหรับหน้าเว็บนี้ในรูปแบบ JSON **ตอบเป็นภาษาไทยทั้งหมด**\n\n"
                 f"{login_note}"
                 f"URL ของหน้านี้: {page.url}\n"
@@ -533,7 +592,17 @@ class UniversalTestPlanner:
 
     def _plan_flows(self, flows: list[NavigationFlow]) -> list[TestCase]:
         cases: list[TestCase] = []
+        seen_transitions: set[tuple[str, str]] = set()
         for flow in flows:
+            # dedup flows ที่เป็น transition เดียวกัน (เช่น 7 สินค้าที่คลิกแล้วไปหน้า
+            # item เหมือนกันหมด) — เก็บ flow แรกของแต่ละคู่ (start,end) ที่ normalize แล้ว
+            key = (
+                flow.start_url.split("?")[0].split("#")[0],
+                flow.end_url.split("?")[0].split("#")[0],
+            )
+            if key in seen_transitions:
+                continue
+            seen_transitions.add(key)
             steps = [self._action_to_step(a) for a in flow.steps]
             cases.append(TestCase(
                 title=f"ทดสอบ flow {flow.name} ตั้งแต่ต้นจนจบ",
