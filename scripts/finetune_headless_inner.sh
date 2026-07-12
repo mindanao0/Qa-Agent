@@ -40,6 +40,12 @@ systemctl isolate multi-user.target
 systemctl stop display-manager.service gdm.service 2>/dev/null || true
 # ollama อาจรันเป็น system service — pkill ฝั่ง user ฆ่าไม่ได้ ต้องหยุดจาก root ตรงนี้
 systemctl stop ollama.service 2>/dev/null || true
+# เครื่องนี้ ollama ปกติรันเป็น user process (nohup ollama serve) ซึ่ง "รอด" การปิด GUI
+# (logind KillUserProcesses=no) และ run_finetune_7b.sh ค่อย pkill หลัง gate — สายไป:
+# ถ้ามีโมเดลค้างใน VRAM (keep_alive) ตอนสั่งรัน gate จะเห็น VRAM ไม่พอแล้ว abort ฟรี
+# → ฆ่าตรงนี้ก่อนวัด VRAM (root ฆ่า process ของ user ได้)
+pkill -x ollama 2>/dev/null || true
+sleep 2
 
 # ── VRAM gate: fail-CLOSED ────────────────────────────────────────────────────
 # เงื่อนไขเดียวที่ยอมให้เทรน: อ่านค่า "ตัวเลข" ได้จริง และเกิน target จริง

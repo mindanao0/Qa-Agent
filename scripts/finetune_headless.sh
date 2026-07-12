@@ -71,14 +71,28 @@ if [[ -z "${RESUME}" ]] && compgen -G "${CKPT_DIR}/checkpoint-*" > /dev/null; th
   echo "  เริ่มใหม่:    ย้าย checkpoint-* ออกก่อน (เช่นเข้าโฟลเดอร์ archive_*)" >&2
   fail=1
 fi
+# RESUME แต่ dataset ใหม่กว่า checkpoint = กับดักเงียบ: trainer จะ resume ทับข้อมูลคนละชุด
+# (เช่น run_multi_site.sh เพิ่ง append ลง train.jsonl) — เทรนจบ 20+ ชม. โดยไม่มี error ใด ๆ
+# แต่ลำดับ/เนื้อหาข้อมูลไม่ตรงกับ 20 step แรกที่ resume มา ต้อง fail-closed ตั้งแต่ตรงนี้
+if [[ -n "${RESUME}" ]]; then
+  NEWEST_STATE="$(ls -t "${CKPT_DIR}"/checkpoint-*/trainer_state.json 2>/dev/null | head -1)"
+  if [[ -n "${NEWEST_STATE}" && "${PROJ_DIR}/data/training/train.jsonl" -nt "${NEWEST_STATE}" \
+        && "${ALLOW_DATASET_CHANGE:-0}" != "1" ]]; then
+    echo "✗ train.jsonl ถูกแก้หลัง checkpoint ล่าสุด (${NEWEST_STATE%/trainer_state.json})" >&2
+    echo "  resume บนข้อมูลที่เปลี่ยนไป = เทรนเพี้ยนแบบเงียบ เลือกเอา:" >&2
+    echo "  • เริ่มใหม่ทั้งรอบ: ย้าย checkpoint-* เข้า archive_* แล้วรันโดยไม่ใส่ RESUME" >&2
+    echo "  • ยืนยันว่า dataset ไม่ได้เปลี่ยนจริง (แค่ mtime ขยับ): ALLOW_DATASET_CHANGE=1" >&2
+    fail=1
+  fi
+fi
 if (( fail != 0 )); then
   echo "preflight ไม่ผ่าน — ยังไม่แตะ GUI, ยกเลิก" >&2
   exit 1
 fi
 
-EST_MIN=$(( MAX_STEPS * 4 ))
+EST_MIN=$(( MAX_STEPS * 5 ))   # วัดจริง 2026-07-12 ที่ seq=384: 275-350s/step
 echo "✓ preflight ผ่าน: dataset $(wc -l < "${PROJ_DIR}/data/training/train.jsonl") บรรทัด | disk ${FREE_DISK_GB}GB | VRAM free ตอนนี้ ${VRAM_NOW}MB (หลังปิด GUI ต้อง >${VRAM_FREE_TARGET_MB}MB)"
-echo "  แผน: MAX_STEPS=${MAX_STEPS} (~${EST_MIN} นาที ≈ $(( EST_MIN / 60 )) ชม. ที่ ~4 นาที/step) | RESUME='${RESUME:-<fresh>}' | budget ${GPU_BUDGET_GIB}GiB | checkpoint ทุก ${SAVE_STEPS} steps"
+echo "  แผน: MAX_STEPS=${MAX_STEPS} (~${EST_MIN} นาที ≈ $(( EST_MIN / 60 )) ชม. ที่ ~5 นาที/step) | RESUME='${RESUME:-<fresh>}' | budget ${GPU_BUDGET_GIB}GiB | checkpoint ทุก ${SAVE_STEPS} steps"
 
 if [[ "${PREFLIGHT:-0}" == "1" ]]; then
   echo "PREFLIGHT=1 — จบแค่ตรวจความพร้อม ไม่ launch"

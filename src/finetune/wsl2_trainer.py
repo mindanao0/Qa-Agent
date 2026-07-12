@@ -10,7 +10,7 @@ trl / datasets / peft / bitsandbytes are required.
 Key design choices:
 
   * 7B preset is the project mandate (never train a smaller model for real runs):
-    seq=256, LoRA r=4 on q/v only, grad_accum=16 — see MODEL_PRESETS["7b"].
+    seq=384, LoRA r=4 on q/v only, grad_accum=16 — see MODEL_PRESETS["7b"].
   * --cpu-offload: bitsandbytes + accelerate GPU↔CPU split — the only way 7B
     trains on the GTX 1660 Ti (5.61 GiB usable). ~4 min/step; a 300-step run is
     ~18-19 h. See load_model_for_training_cpu_offload for the three crash gotchas.
@@ -78,16 +78,17 @@ MODEL_PRESETS: dict[str, dict] = {
     "7b": {
         "base_model":    "unsloth/Qwen2.5-Coder-7B-Instruct-bnb-4bit",
         "hf_base":       "Qwen/Qwen2.5-Coder-7B-Instruct",
-        "max_seq_length": 256,   # 512→256: 7B base eats ~5.21GB, leaving <0.4GB for
-                                 # activations on a 6GB (5.61GB usable) card — the first
-                                 # training step OOM'd by ~56MB at seq=512. Halving the
-                                 # sequence halves activation memory to clear it. Do NOT drop
-                                 # to 128: prepare_dataset filters examples >seq tokens, and
-                                 # at 128 the dataset is gutted. Real VRAM headroom comes from
-                                 # freeing the GUI (`systemctl isolate multi-user.target`), not
-                                 # from shrinking seq. NOTE the kept-% depends on the dataset:
-                                 # measured 2026-06-27 only ~36% survived seq=256 —
-                                 # prepare_dataset logs the real number every run.
+        "max_seq_length": 384,   # 256→384 (2026-07-12): validated by the 20-step headless
+                                 # cpu-offload run at budget 2.9 — min free VRAM 0.83GB
+                                 # across ~2h, zero watchdog strikes, keeps 93.3% of the
+                                 # dataset vs 21.8% at 256 (p50=299 tok — see
+                                 # scripts/measure_seq_fit.py). The old 256 came from the
+                                 # 2026-06-27 GUI-up OOM at seq=512; headless training
+                                 # (GUI down) is what buys the activation headroom.
+                                 # FINETUNE_SEQ_LEN env still overrides for experiments,
+                                 # but NEVER resume a checkpoint across a seq change —
+                                 # prepare_dataset re-filters at the new length, so the
+                                 # resumed run silently trains on a different dataset.
         "lora_r":         4,     # fewer trainable params → less optimizer VRAM
         "lora_alpha":     8,
         "grad_accum":     16,    # compensate for smaller seq_len

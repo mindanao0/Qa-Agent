@@ -14,13 +14,40 @@
 
 ## ⚠️ ตัวเลขที่ควรรู้ก่อนตัดสินใจ
 
-- ความเร็ว: **~4 นาที/step** (CPU-offload path บน GTX 1660 Ti 6GB)
-- `MAX_STEPS=20` (รอบทดสอบ) ≈ **1.5 ชม.** | `MAX_STEPS=300` ≈ **18–19 ชม.**
-- 1 step = 16 examples (batch 1 × grad_accum 16) → 300 steps ≈ 4,800 examples
-- checkpoint ทุก **20 steps** (~80 นาที) — ปรับได้ด้วย `SAVE_STEPS`
-- ตัวกรองความยาว (วัดจริง 2026-07-12 หลัง dedupe):
-  seq=256 เก็บข้อมูลได้ **21.8%** | seq=320 → 67.2% | **seq=384 → 92.6%**
-  → รอบทดสอบ 20 steps ควรลอง `FINETUNE_SEQ_LEN=384` ถ้า VRAM ไหว จะได้ใช้ข้อมูลเกือบครบ
+- ความเร็ว: **~4.5–6 นาที/step** ที่ seq=384 (วัดจริงรอบ validation 2026-07-12: 275–350s/step)
+- `MAX_STEPS=20` (รอบทดสอบ) ≈ **2 ชม.** | `MAX_STEPS=300` ≈ **23–29 ชม.**
+  (`RESUME=auto` ต่อจาก checkpoint-20 ของรอบทดสอบ → เหลือ ~21–27 ชม.)
+- 1 step = 16 examples (batch 1 × grad_accum 16) → 300 steps ≈ 4,800 examples (~1.3 epoch)
+- checkpoint ทุก **20 steps** (~1.5–2 ชม.) — ปรับได้ด้วย `SAVE_STEPS`
+- **seq=384 เป็นค่า default ของ preset 7b แล้ว** (validation 2026-07-12 ผ่าน: VRAM เหลือ
+  ต่ำสุด 0.83GB, watchdog ไม่สะดุด, เก็บข้อมูล 93.3%) — seq-fit หลัง dedupe:
+  256 → 21.8% | 320 → 67.2% | **384 → 92.6%**
+  `FINETUNE_SEQ_LEN` เหลือไว้สำหรับทดลองเท่านั้น และ**ห้าม RESUME ข้ามค่า seq ที่ต่างกัน**
+  (dataset ถูกกรองใหม่ตามความยาว → เทรนต่อบนข้อมูลคนละชุดแบบเงียบ ๆ)
+
+---
+
+## 📋 เช็คลิสต์วันรันจริง (นัด 2026-07-16 — audit ครบ 2026-07-12)
+
+**ก่อนกด (~5 นาที):**
+1. `train.jsonl` ต้องไม่ถูกแก้หลัง 12 ก.ค. (sha256 อ้างอิง: `3903477...568ab`, 3641 บรรทัด)
+   — **ห้ามรัน `run_multi_site.sh` ก่อนวันรัน** (มัน append ลง train.jsonl); ถ้าเผลอรันไป
+   preflight จะ fail เอง → ต้องเปลี่ยนเป็นเริ่ม fresh (ย้าย checkpoint-* เข้า archive_*)
+2. ห้ามอัปเดต `~/.qa-finetune-env` และอย่าอัปเกรด nvidia driver ก่อน/ระหว่างรัน
+3. `PREFLIGHT=1 RESUME=auto MAX_STEPS=300 bash scripts/finetune_headless.sh` → ต้องเขียวทุกข้อ
+4. save งานทุกอย่างแล้วปิดแอป — GUI จะถูกปิดทิ้งทั้ง session ตอนเริ่มเทรน
+
+**กด:** `sudo MAX_STEPS=300 RESUME=auto bash scripts/finetune_headless.sh`
+— ไม่ต้องใส่ env อื่น (seq=384 เป็น default แล้ว) | จอดับไป TTY = ปกติ |
+โดนขัดกลางทาง (ไฟดับ/รีบูต) → สั่งคำสั่งเดิมซ้ำ เทรนต่อจาก checkpoint ล่าสุด
+
+**แนะนำก่อนวันจริง (~2 ชม.):** ซ้อม resume หนึ่งรอบ —
+`sudo MAX_STEPS=40 RESUME=auto bash scripts/finetune_headless.sh`
+เส้นทาง resume (โหลด optimizer/scheduler แล้วเทรนต่อจาก step 21) ยังไม่เคยถูกรันจริง
+รอบซ้อมนี้พิสูจน์มันครบ และ 20 step ที่ได้นับเข้าเป้าจริง (วันจริงเหลือ ~21–24 ชม.)
+
+**เทรนจบ:** `bash scripts/run_after_finetune.sh 6` (start ollama + register + eval ให้ครบ)
+หรือ A/B ด้วยโมเดลใหม่: `LLM_MODEL=qa-agent-finetuned bash scripts/run_after_finetune.sh 6`
 
 ---
 
@@ -34,24 +61,26 @@ PREFLIGHT=1 bash scripts/finetune_headless.sh
 มันเช็คให้: python env, dataset, disk, nvidia-smi, checkpoint ค้าง — พังข้อไหนบอกตรงนั้น
 ผ่านแล้วจะสรุปแผน (จำนวน step, เวลาโดยประมาณ, budget) ให้ดูก่อน
 
-## 🧪 STEP 1 — รอบทดสอบ 20 steps (~1.5 ชม.)
+## 🧪 STEP 1 — รอบทดสอบ 20 steps (~2 ชม.) — ✅ ผ่านแล้ว 2026-07-12
 
 ```bash
-sudo MAX_STEPS=20 FINETUNE_SEQ_LEN=384 bash scripts/finetune_headless.sh
+sudo MAX_STEPS=20 bash scripts/finetune_headless.sh
 ```
 
 - จอจะดับไปหน้า TTY ภายใน ~5 วิ = **ปกติ** (GUI ถูกปิดเพื่อคืน VRAM)
 - ดูสด: กด `Ctrl+Alt+F3` → login → `journalctl -u qa-finetune -f`
   จะเห็น `Step N/20 | Loss: ... | VRAM: ... | ETA ...` ทุก ~4 นาที + VRAM ทุก 30 วิ
   **ถ้าเงียบเกิน ~5 นาทีค่อยถือว่าผิดปกติ** (ของเดิมเงียบทั้งวันเพราะ log ลงไฟล์อย่างเดียว)
-- เทรนจบ GUI กลับมาเอง — ถ้าระหว่างนั้น VRAM watchdog เตือน/หยุด แปลว่า seq=384 ตึงไป
-  → รอบจริงใช้ `FINETUNE_SEQ_LEN=320` หรือไม่ใส่ (=256)
+- เทรนจบ GUI กลับมาเอง — ถ้าอนาคต watchdog เตือน/หยุดที่ seq=384 (เช่น dataset โตขึ้น)
+  → เริ่มรอบทดสอบใหม่แบบ fresh ด้วย `FINETUNE_SEQ_LEN=320` (ห้าม resume ข้ามค่า seq)
+- รอบ 2026-07-12 ผ่านจริง: 20/20 steps, loss 2.22→1.95, VRAM เหลือต่ำสุด 0.83GB
 
-## 🚀 STEP 2 — รอบจริง 300 steps (~18–19 ชม.)
+## 🚀 STEP 2 — รอบจริง 300 steps (~21–27 ชม. เมื่อต่อจาก checkpoint-20)
 
 ```bash
-sudo MAX_STEPS=300 RESUME=auto FINETUNE_SEQ_LEN=384 bash scripts/finetune_headless.sh
-# (FINETUNE_SEQ_LEN ตามผลรอบทดสอบ; RESUME=auto = ต่อจาก checkpoint ล่าสุดถ้ามี)
+sudo MAX_STEPS=300 RESUME=auto bash scripts/finetune_headless.sh
+# (RESUME=auto = ต่อจาก checkpoint ล่าสุดถ้ามี — เช่น checkpoint-20 ของรอบทดสอบ
+#  ซึ่งเทรนด้วย seq/dataset เดียวกัน จึงต่อได้เลย ไม่เสีย 20 step แรกฟรี)
 ```
 
 - **หยุดกลางทางแบบไม่เสียงาน:** `sudo systemctl stop qa-finetune`
@@ -64,9 +93,14 @@ sudo MAX_STEPS=300 RESUME=auto FINETUNE_SEQ_LEN=384 bash scripts/finetune_headle
 
 เทรนจบสคริปต์จะ export ให้เอง (แบบใหม่: **CPU ล้วน ไม่ใช้ VRAM** — แปลงเฉพาะ
 adapter ~2MB ด้วย llama.cpp แล้วให้ Ollama ประกอบ `FROM qwen2.5-coder:7b + ADAPTER`)
-แต่ตอนนั้น ollama daemon ถูกปิดอยู่ มันจะพิมพ์คำสั่ง register ทิ้งไว้ให้ ทำต่อ:
+แต่ตอนนั้น ollama daemon ถูกปิดอยู่ (โดน pkill ตอนเริ่มเทรน และ**ไม่ฟื้นเอง** —
+เครื่องนี้ ollama ไม่ใช่ systemd service) — ขั้น register มี 2 ทาง:
 
 ```bash
+# ทางสะดวก: สคริปต์ post-run จัดการให้ (start ollama + register + eval ต่อ)
+bash scripts/run_after_finetune.sh 6
+
+# หรือทำเอง:
 ollama serve > /tmp/ollama.log 2>&1 &
 sleep 3
 cd ~/code/Qa-Agent/models/qwen2.5-coder-finetuned && ollama create qa-agent-finetuned -f Modelfile.adapter
@@ -87,11 +121,17 @@ bash scripts/export_adapter_gguf.sh <adapter_dir>       # ระบุเอง
 
 ## 🔁 (ทางเลือก) เทรนเสร็จให้รัน multi-site eval ต่ออัตโนมัติ
 
-เปิดอีก terminal (หรือ tmux) ก่อนสั่งเทรน:
+สคริปต์นี้จัดการให้ครบ: รอเทรนจบ → **start ollama เอง** (ไม่มีใครปลุกให้หลังเทรน) →
+**register adapter ล่าสุดเป็น `qa-agent-finetuned`** → รัน eval 14 sites:
 
 ```bash
-bash scripts/run_after_finetune.sh 6   # รอเทรนจบ → eval 14 sites 6 ชม.
+bash scripts/run_after_finetune.sh 6                          # eval ด้วย base model
+LLM_MODEL=qa-agent-finetuned bash scripts/run_after_finetune.sh 6   # eval ด้วยโมเดล fine-tuned (A/B)
 ```
+
+⚠️ ถ้าจะให้มัน "รอ" ข้ามช่วงเทรน ห้ามรันจาก terminal ใน GUI — ตอนเทรนเริ่ม GUI ถูก
+isolate ทิ้งทั้ง session สคริปต์ตายไปด้วย ให้ `nohup` จาก TTY (Ctrl+Alt+F3) หรือ
+ง่ายสุดคือรอเทรนจบแล้วค่อยรัน (มันข้ามการรอ เริ่ม eval ทันที)
 
 ---
 
@@ -101,7 +141,7 @@ bash scripts/run_after_finetune.sh 6   # รอเทรนจบ → eval 14 si
 |---|---|
 | `ABORT: VRAM never freed above 5700MB` | GUI/process อื่นยังถือ VRAM หลังปิด GUI แล้ว — `nvidia-smi` ดูใครถือ; นี่คือ gate ทำงานถูกต้อง (ของเดิมจะฝืนเทรนแล้วพัง) |
 | `Found existing checkpoint ... but --resume was not given` | มีงานเก่าค้าง — ใส่ `RESUME=auto` เพื่อต่อ หรือย้าย checkpoint ออกเพื่อเริ่มใหม่ |
-| `stop_reason=vram_critical (watchdog)` | VRAM หมดจริง 2 รอบติด — ลด `FINETUNE_SEQ_LEN` หรือใช้ budget 2.9 (default) |
+| `stop_reason=vram_critical (watchdog)` | VRAM หมดจริง 2 รอบติด — ใช้ budget 2.9 (default) หรือลด `FINETUNE_SEQ_LEN` **แบบเริ่ม fresh เท่านั้น** (resume ข้าม seq = dataset คนละชุด) |
 | journalctl เงียบเกิน 5 นาที | ผิดปกติจริง — `systemctl status qa-finetune` + `tail models/finetune_output/headless_run_*.log` |
 | อยากยกเลิก | `sudo systemctl stop qa-finetune` (GUI จะถูกเปิดคืนโดย unit; ถ้าไม่ ใช้ `sudo systemctl isolate graphical.target`) |
 | trainer เตือน clamp budget | ตั้งใจ: >3.2GiB คือโซน OOM-spike ที่วัดมาแล้ว และเร็วขึ้นแค่ ~6% — ใช้ 2.9 ตาม default |

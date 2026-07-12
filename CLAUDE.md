@@ -54,10 +54,49 @@ Branch form-filling-crawler — form-filling crawler + 14-site eval loop + 7B fi
   transformers<5 uv constraint (main venv was broken: transformers 5.5 vs torch 2.6 — 606 tests
   collect again); multi-site creds moved to eval/test_credentials.json; run scripts live in
   scripts/ (run_after_finetune.sh replaces both dead continue watchers).
-Workflow: `PREFLIGHT=1 bash scripts/finetune_headless.sh` → `sudo MAX_STEPS=20 bash
-scripts/finetune_headless.sh` (validation) → `sudo MAX_STEPS=300 RESUME=auto bash
+- VALIDATION PASSED 2026-07-12 (log: models/finetune_output/headless_run_20260712_091451.log):
+  20/20 steps at seq=384 headless (budget 2.9), rc=0, loss 2.22→1.95, min free VRAM 0.83GB,
+  zero watchdog strikes, kept 93.3% of dataset, 275-350 s/step (300 steps ≈ 23-29 h fresh,
+  ~21-27 h resuming checkpoint-20 — same seq+dataset, so resume is valid). GUI-off-then-restore
+  is why the desktop looks freshly booted after a run. GGUF adapter export re-verified; ollama
+  daemon was down so registration deferred (see next point). SEQ DECISION CLOSED: 384 is now the
+  7b preset default in wsl2_trainer.py — FINETUNE_SEQ_LEN is experiment-only; NEVER resume across
+  a seq change (prepare_dataset re-filters → silent train-data mismatch).
+- run_after_finetune.sh (2026-07-12): starts ollama itself if down (NOT a systemd service on this
+  box — pkill'd at train start, nothing revives it), registers qa-agent-finetuned from
+  Modelfile.adapter (cd first: ADAPTER path is relative; idempotent), aborts before a multi-hour
+  eval if LLM_MODEL names an unregistered model. A/B eval:
+  `LLM_MODEL=qa-agent-finetuned bash scripts/run_multi_site.sh` (LLM_MODEL env → src/llm/adapter.py).
+- Ollama store RESTORED 2026-07-12: the config's base tag qwen2.5-coder:7b-instruct-q4_K_M was
+  MISSING (only qwen2.5-coder:7b existed — every agent/eval LLM call would 404; a stray NON-coder
+  qwen2.5:7b-instruct-q4_K_M from a mistyped pull ~2026-07-09 is still installed, delete if disk
+  is needed). Fixed at zero download: `ollama cp qwen2.5-coder:7b qwen2.5-coder:7b-instruct-q4_K_M`
+  (same blob dae161e27b0e) + pulled nomic-embed-text (embeddings verified 768-dim, matching
+  src/rag/store.py). qa-agent-finetuned registered from the 20-step validation adapter (will be
+  re-registered with the real adapter after the 300-step run).
+- PRE-RUN AUDIT for the 2026-07-16 real run (2026-07-12, all green — checklist in
+  docs/RUN_FINETUNE_7B.md): resume dry-run in the finetune venv proves get_last_checkpoint →
+  checkpoint-20, done_steps 20<300, and EXACT dataset parity at the new seq=384 preset default
+  (4005 interleaved → 3735 kept, identical to the validation run) using the checkpoint's own
+  tokenizer. venv healthy (torch 2.10.0+cu128, CUDA on 1660 Ti, transformers 4.57.6, unsloth
+  2026.6.7); llama.cpp cached at ~/.cache/qa-agent/llama.cpp (no network needed on run day);
+  train.jsonl sha256 3903477...568ab (3641 lines, 0 bad JSON, mtime OLDER than checkpoint);
+  system safe for a 27h run (unattended-upgrades Automatic-Reboot off, no logind idle action,
+  0 GPU Xid this boot, swap 4G, disk 90G). NEW GUARDS (2026-07-12): inner script pkills
+  user-level ollama BEFORE the VRAM gate (nohup'd ollama survives GUI teardown; previously
+  killed only after the gate → a keep_alive'd model could abort the launch); launcher preflight
+  fails closed when RESUME is set but train.jsonl is newer than the newest checkpoint
+  (ALLOW_DATASET_CHANGE=1 overrides). ONLY-REMAINING-UNTESTED: the live
+  trainer.train(resume_from_checkpoint=...) continuation — recommended ~2h rehearsal before
+  16/07: `sudo MAX_STEPS=40 RESUME=auto bash scripts/finetune_headless.sh` (proves it AND banks
+  20 real steps). DATASET FREEZE — USER DECISION 2026-07-12: no eval / no training-data
+  collection (run_multi_site.sh appends train.jsonl) until the 300-step run completes; the
+  preflight mtime guard enforces this. If any session is asked to run an eval before then,
+  surface this freeze first.
+Workflow: `PREFLIGHT=1 bash scripts/finetune_headless.sh` → `sudo MAX_STEPS=300 RESUME=auto bash
 scripts/finetune_headless.sh` (real run; survives interruption). Guide: docs/RUN_FINETUNE_7B.md.
-Next: 20-step validation run (decide seq 256 vs 384 from its VRAM headroom) → 300-step run.
+Next: 300-step run → scripts/eval_finetune.py (val.jsonl gates: train_loss<1.5, quality_gain≥0.05)
++ 14-site A/B vs the base-model reports in reports/multi_site/.
 
 ---
 ### Prior active task — Sprint 15 Parallel Execution (CLOSED 2026-06-04)
