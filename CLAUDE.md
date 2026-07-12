@@ -26,6 +26,41 @@ Decision heuristic — ask yourself: "Could I hand each subtask to a different d
 All specifications are in docs/specs/
 
 ## Active Task
+Branch form-filling-crawler — form-filling crawler + 14-site eval loop + 7B fine-tune pipeline.
+
+2026-07-12 finetune-pipeline overhaul (evidence-first diagnosis of the 2026-06-27 "hang"):
+- ROOT CAUSE (journal-proven): systemd expands ${VAR} inside `systemd-run bash -c "<inline>"`
+  ("Referenced but unset environment variable ... FREE, READY") → the old headless VRAM gate was
+  blind AND fail-open. Training itself was HEALTHY (step 6/300, ~222 s/step, VRAM 5.0-5.6/6.0)
+  but all output was redirected to a file → journalctl showed nothing for 26 min → user
+  power-cycled at step 7 ("Power key pressed short" in journal). Nothing saved: no resume,
+  SAVE_STEPS was 50.
+- FIXES: payload is a real file now (scripts/finetune_headless_inner.sh) + --expand-environment=no
+  + fail-closed numeric gate + `tee` to journald (live step/loss/ETA every step) + PREFLIGHT=1
+  mode; trainer (src/finetune/wsl2_trainer.py) gained --resume auto|PATH (and refuses fresh runs
+  over existing checkpoints), SAVE_STEPS default 20, logging_steps=1 in offload mode, honest
+  stop_reason (vram_critical vs user_interrupt), 2-strike watchdog, gpu-budget clamp >3.2
+  (4.5 = measured spike territory and only ~6% faster than validated 2.9).
+- DATA: train.jsonl deduped 7158→3641 unique (collector id was positional → content-hash;
+  scripts/dedupe_training_data.py, idempotent, .bak kept). Seq-fit measured 2026-07-12
+  (scripts/measure_seq_fit.py): seq=256 keeps 21.8%, 320→67.2%, 384→92.6% (p50=299 tok);
+  FINETUNE_SEQ_LEN env overrides the preset for validation runs.
+- EXPORT: scripts/export_adapter_gguf.sh — CPU-only LoRA→GGUF (llama.cpp convert_lora_to_gguf)
+  + Ollama `FROM qwen2.5-coder:7b` + ADAPTER. Verified end-to-end 2026-07-12 (qa-agent-finetuned
+  registered; base re-pulled — it was missing from Ollama). Replaces the unsloth all-on-GPU merge
+  that OOM'd by ~34MB with the GUI up.
+- HYGIENE: models/* gitignored (3B artifacts deleted per user decision — ~7.7GB freed;
+  June-27 7B validation artifacts in models/finetune_output/archive_20260627_7b_validation/);
+  transformers<5 uv constraint (main venv was broken: transformers 5.5 vs torch 2.6 — 606 tests
+  collect again); multi-site creds moved to eval/test_credentials.json; run scripts live in
+  scripts/ (run_after_finetune.sh replaces both dead continue watchers).
+Workflow: `PREFLIGHT=1 bash scripts/finetune_headless.sh` → `sudo MAX_STEPS=20 bash
+scripts/finetune_headless.sh` (validation) → `sudo MAX_STEPS=300 RESUME=auto bash
+scripts/finetune_headless.sh` (real run; survives interruption). Guide: docs/RUN_FINETUNE_7B.md.
+Next: 20-step validation run (decide seq 256 vs 384 from its VRAM headroom) → 300-step run.
+
+---
+### Prior active task — Sprint 15 Parallel Execution (CLOSED 2026-06-04)
 Sprint 15 Parallel Execution CLOSED 2026-06-04 (master) — PASS HONESTLY. Real wall-clock throughput
 gain from fanning out browser workers while the LLM/Ollama path stays serialized (Semaphore(1)).
 Spec: docs/specs/"Sprint 15 Parallel Execution.md".
@@ -342,7 +377,8 @@ Prior sprints (carry-over notes):
 - TD-18 FIXED 2026-05-31 — proc.kill() only killed direct child; orphan processes burned CPU indefinitely. Fixed via process-tree kill.
 
 ## Rules (always apply)
-- OS: Windows 11 + WSL2 (executor cross-platform ready for Linux migration)
+- OS: native Ubuntu Linux (GTX 1660 Ti 6GB, 15GiB RAM). Windows/WSL2-era scripts are quarantined
+  in scripts/legacy_windows/; the "wsl2" in src/finetune/wsl2_trainer.py is a historical name
 - LLM: Ollama localhost:11434 only — no external APIs
 - Python 3.11+ async-first
 - VRAM: 6GB GPU, 16GB RAM
