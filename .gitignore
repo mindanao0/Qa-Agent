@@ -22,20 +22,25 @@ node_modules/
 # Logs
 logs/
 
-# Fine-tune artefacts — large files, never commit
-models/finetune_output/checkpoint-*/
-models/finetune_output/emergency/
-models/finetune_output/final/
-models/qwen2.5-coder-finetuned/*.gguf
-models/qwen2.5-coder-finetuned/
-models/qwen2.5-coder-finetuned_gguf/
-models/eval_results.json
+# Model artefacts — multi-GB, never commit (models/.gitkeep marks the dir;
+# includes finetune_output checkpoints/logs and every exported GGUF)
+models/*
+!models/.gitkeep
 unsloth_compiled_cache/
 
-# QA reports — HTML too large, keep only multi_site summaries
+# QA reports — raw run dumps are huge and rewritten every run; commit only
+# small curated summaries
 reports/qa_report_*.html
 reports/screenshots/
-reports/multi_site/_run_log*.txt
+reports/multi_site/_*.txt
+reports/multi_site/detail/
+
+# Dedupe backup of the training set
+data/training/*.jsonl.bak
+
+# Claude Code local state — per-user/per-session, churns every run
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
 
 # Misc
 package-lock.json
