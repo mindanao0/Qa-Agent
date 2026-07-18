@@ -40,7 +40,14 @@ async def test_explore_records_navigation(tmp_path):
     page.url = "https://x.com/start"
     page.goto = AsyncMock()
     page.title = AsyncMock(return_value="Start")
-    page.evaluate = AsyncMock(return_value="{}")  # localStorage snapshot
+    # _snapshot_state serializes storage to a JSON *string*; _expand_menus expects
+    # a *list* of {name, role} opener dicts. Return the right shape per call — the
+    # old single "{}" made _expand_menus iterate a str char-by-char, calling .get()
+    # on a str -> AttributeError that explore() swallowed, silently dropping the page.
+    async def _fake_evaluate(js, *args, **kwargs):
+        return "{}" if "localStorage" in js else []
+
+    page.evaluate = AsyncMock(side_effect=_fake_evaluate)
     page.wait_for_load_state = AsyncMock()
 
     # No interactive elements found → page recorded with no actions

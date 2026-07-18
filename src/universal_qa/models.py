@@ -8,6 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class TestCase(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    # Domain model, not a pytest case despite the "Test" prefix — skip collection.
+    __test__ = False
 
     id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
     title: str
@@ -32,6 +34,8 @@ class StepTrace(BaseModel):
 
 class TestResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    # Domain model, not a pytest case despite the "Test" prefix — skip collection.
+    __test__ = False
 
     test_case: TestCase
     passed: bool
