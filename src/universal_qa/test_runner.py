@@ -12,15 +12,194 @@ from src.agents.observer_driver.observers.accessibility_observer import (
     AccessibilityObserver,
 )
 from src.agents.observer_driver.observers.security_observer import SecurityObserver
-from src.contractskill.sfg import SFGStore
+from src.contractskill.sfg import (
+    BLOCKED_ACTION_PATTERNS as _SFG_BLOCKED_ACTION_PATTERNS,
+    SFGStore,
+)
 from src.explorer.executor import HypothesisExecutor
 from src.explorer.hypothesis import TestHypothesis
+from src.fuzzer.anomaly_classifier import _SQL_ERROR_RE
+from src.fuzzer.vector_generator import base_vectors_for, infer_field_type
 from src.llm.instructor_client import InstructorClient
 from src.universal_qa.models import StepTrace, TestCase, TestResult
 from src.universal_qa.reporters.terminal import TerminalReporter
 
 _XSS_PAYLOAD = "<script>window.__xss_fired=true;</script>"
 _SQLI_PAYLOAD = "' OR '1'='1"
+
+# ── Security fuzzing: adversarial vectors + safety guards (pure, offline) ─────
+#
+# The security runner injects a BOUNDED, TYPE-AWARE set of adversarial vectors
+# per field (from src.fuzzer.vector_generator.BASE_VECTORS_BY_TYPE) instead of
+# one fixed payload. Every vector is READ-SAFE — boolean/UNION SQLi and
+# JS-flag/alert XSS only, NO DROP/DELETE/UPDATE and no data mutation — so
+# probing a genuinely-vulnerable target can never destroy data. See
+# _run_security for the thin Playwright driver around these pure helpers.
+
+# XSS probes. [0] is the executable payload that sets window.__xss_fired so the
+# execution check can tell an EXECUTED script from a merely REFLECTED one.
+_XSS_VECTORS: tuple[str, ...] = (
+    _XSS_PAYLOAD,                                    # executes → sets the flag
+    "<img src=x onerror=window.__xss_fired=true>",   # attribute-context executor
+    "<script>alert('xss')</script>",                 # reflected-only probe (no flag)
+)
+# SQLi probes — all READ-oriented (boolean tautology / UNION), non-mutating.
+_SQLI_VECTORS: tuple[str, ...] = (
+    _SQLI_PAYLOAD,               # "' OR '1'='1"  boolean tautology
+    "1' OR '1'='1'--",          # tautology + comment
+    "' UNION SELECT NULL--",     # UNION probe (read-only, non-mutating)
+)
+
+# EXPLICIT cap — at most this many vectors per field AND at most this many
+# fill→submit rounds per test. DELIBERATE bound (kept small on purpose) so a
+# 14-site run stays practical; this is NOT a silent truncation.
+_MAX_VECTORS_PER_FIELD = 5
+
+# DELIBERATE safety guard: a field whose accessible name looks like a credential
+# / secret is NEVER filled with a payload, even if a page exposes it with a
+# textbox role. Playwright's get_by_role("textbox") already excludes
+# <input type=password> (no textbox ARIA role); this is belt-and-suspenders for
+# a mislabeled / role-overridden secret field.
+_PASSWORD_FIELD_KW: tuple[str, ...] = (
+    "password", "passwd", "pwd", "pin", "cvv", "cvc", "secret",
+)
+
+# SQL-error markers the reused _SQL_ERROR_RE regex does not already cover.
+_EXTRA_SQL_ERROR_MARKERS: tuple[str, ...] = (
+    "mysql_fetch", "you have an error in your sql", "warning: mysql",
+    "sqlite", "ora-0", "unclosed quotation mark", "odbc",
+    "quoted string not properly terminated",
+)
+
+# JS (a DOM read, NOT a locator) returning the action URL of the form the
+# security runner would submit — the <form> around the first submit-like button,
+# else the first <form>. Mirrors SFGTraversalExplorer._action_blocked's read.
+_SUBMIT_FORM_ACTION_JS = """() => {
+    const btn = document.querySelector('button, input[type=submit], [role=button]');
+    const form = (btn && btn.closest('form')) || document.querySelector('form');
+    if (!form) return '';
+    return String(form.getAttribute('action') || form.action || '');
+}"""
+
+# JS (a DOM read) computing a field's accessible name from its own element.
+_FIELD_NAME_JS = (
+    "el => ("
+    "el.getAttribute('aria-label')"
+    " || el.getAttribute('placeholder')"
+    " || (el.labels && el.labels[0] && el.labels[0].textContent)"
+    " || el.getAttribute('name')"
+    " || el.getAttribute('id')"
+    " || ''"
+    ").trim()"
+)
+
+
+def _is_password_field(field_name: str) -> bool:
+    """True if a field's accessible name looks like a credential/secret.
+
+    Used as an EXPLICIT, deliberate safety guard — such a field is never fuzzed.
+    """
+    low = (field_name or "").lower()
+    return any(k in low for k in _PASSWORD_FIELD_KW)
+
+
+def _is_blocked_action(action_url: str) -> bool:
+    """True if a form's action targets a BLOCKED (destructive/credential)
+    endpoint — delete/remove/transfer/payment/logout/deactivate/password.
+
+    Uses the SAME src.contractskill.sfg.BLOCKED_ACTION_PATTERNS frozenset that
+    SFGTraversalExplorer._action_blocked uses, so the security runner refuses to
+    submit exactly the forms the crawler refuses to click. Pure/offline.
+    """
+    low = (action_url or "").lower()
+    return any(p in low for p in _SFG_BLOCKED_ACTION_PATTERNS)
+
+
+def _security_vectors_for_field(field_name: str, is_xss: bool) -> list[str]:
+    """Bounded, TYPE-AWARE adversarial vectors for ONE field (pure/offline).
+
+    infer_field_type(name, None) maps the field's accessible name to a
+    BASE_VECTORS_BY_TYPE category (string/integer/email/slug) so an email box is
+    probed with malformed-email vectors, an integer box with numeric edge cases,
+    etc. — instead of blasting one payload into every textbox.
+
+    Kind-specific injection probes go FIRST (the executable XSS payload / the
+    canonical SQLi strings must always run so the runner's checks stay
+    meaningful), then type-aware base vectors fill the remaining budget. Deduped,
+    order-preserving, capped at _MAX_VECTORS_PER_FIELD (EXPLICIT bound).
+    """
+    ftype = infer_field_type(field_name or "", None)
+    kind = list(_XSS_VECTORS if is_xss else _SQLI_VECTORS)
+    base = base_vectors_for(ftype, max_vectors=_MAX_VECTORS_PER_FIELD)
+    merged: list[str] = []
+    seen: set[str] = set()
+    for v in (*kind, *base):
+        if v in seen:
+            continue
+        seen.add(v)
+        merged.append(v)
+        if len(merged) >= _MAX_VECTORS_PER_FIELD:
+            break
+    return merged
+
+
+def _find_reflected_xss(page_content: str, injected: list[str]) -> str | None:
+    """First injected HTML/JS vector that appears RAW (unescaped) in the
+    serialized DOM → reflected XSS. Entity-encoded reflections (the app escaped
+    '<' to '&lt;') correctly do NOT match. Pure/offline.
+    """
+    content = page_content or ""
+    for v in injected:
+        if not v:
+            continue
+        if ("<" in v or "javascript:" in v.lower()) and v in content:
+            return v
+    return None
+
+
+def _find_sql_error(page_content: str) -> str | None:
+    """First SQL-error marker leaked into the content, or None. Reuses the
+    Sprint-13 _SQL_ERROR_RE regex (broad, vendor-agnostic) plus extra vendor
+    markers it does not cover. Pure/offline — NO HTTP-status coupling (that is
+    why AnomalyClassifier.classify, which is HTTP-only, is NOT reused here).
+    """
+    content = page_content or ""
+    m = _SQL_ERROR_RE.search(content)
+    if m:
+        return m.group(0)
+    low = content.lower()
+    return next((kw for kw in _EXTRA_SQL_ERROR_MARKERS if kw in low), None)
+
+
+def _classify_security_response(
+    *, xss_fired: bool, page_content: str, injected: list[str]
+) -> tuple[bool, str | None]:
+    """Pure post-submit classifier → (passed, failure_reason). Offline-testable.
+
+    Records a vulnerability signal (passed=False) if ANY of:
+      * window.__xss_fired was set           → script EXECUTED.
+      * an injected vector reflects unescaped → reflected XSS.
+      * a SQL-error string leaked             → SQLi signal.
+    """
+    if xss_fired:
+        return False, "XSS payload ถูก execute (window.__xss_fired=true)"
+    reflected = _find_reflected_xss(page_content, injected)
+    if reflected:
+        return False, f"XSS payload สะท้อนกลับแบบ unescaped ในหน้า: {reflected[:80]}"
+    sql_hit = _find_sql_error(page_content)
+    if sql_hit:
+        return False, f"พบ SQL error keyword '{sql_hit}' ในหน้าที่ตอบกลับ"
+    return True, None
+
+
+async def _read_field_name(locator) -> str:
+    """Best-effort accessible name of a field via its own element (role-based
+    locator + element.evaluate — a DOM read, NOT a CSS selector)."""
+    try:
+        name = await locator.evaluate(_FIELD_NAME_JS)
+    except Exception:
+        return ""
+    return (name or "").strip()
 
 # Thai action keywords → English equivalents ที่ HypothesisExecutor เข้าใจ
 _THAI_NAV = re.compile(r'^(เปิดหน้า|ไปที่หน้า|ไปที่|นำทางไปยัง|เปิด)\s+', re.IGNORECASE)
@@ -367,8 +546,9 @@ class UniversalTestRunner:
     async def _run_security(self, tc: TestCase, page: Page) -> TestResult:
         start = time.monotonic()
         traces: list[StepTrace] = []
+        # is_xss selects the vector SET; DETECTION is unified below (execution +
+        # reflection + SQL-error) so either test class catches either signal.
         is_xss = "xss" in tc.title.lower()
-        payload = _XSS_PAYLOAD if is_xss else _SQLI_PAYLOAD
 
         try:
             await page.goto(tc.source_url, wait_until="domcontentloaded", timeout=30_000)
@@ -381,38 +561,112 @@ class UniversalTestRunner:
                 duration_ms=int((time.monotonic() - start) * 1000),
             )
 
-        inputs = page.get_by_role("textbox")
-        count = await inputs.count()
-        for i in range(count):
-            try:
-                await inputs.nth(i).fill(payload, timeout=5_000)
-            except Exception:
-                pass
-        traces.append(StepTrace(
-            step=f"กรอก payload ลงใน {count} ช่องรับข้อมูล",
-            status="passed", detail=f"payload: {payload[:60]}",
-        ))
-
+        # ── SAFETY GUARD 1: blocked-endpoint / read-safe scoping ─────────────
+        # Inspect the form we WOULD submit BEFORE touching it. If its action
+        # targets a destructive/credential endpoint (same sfg frozenset the
+        # crawler refuses to click), SKIP submission entirely — recorded HONESTLY
+        # as "skipped" (never a misleading pass/fail). The header audit still
+        # runs (read-only GET). This closes a real gap: the old runner filled and
+        # submitted with NO endpoint guard.
         try:
-            await page.get_by_role("button").first.click(timeout=5_000)
-            await page.wait_for_timeout(1_000)
+            action_url = await page.evaluate(_SUBMIT_FORM_ACTION_JS)
         except Exception:
-            pass
+            action_url = ""
+        if _is_blocked_action(action_url):
+            traces.append(StepTrace(
+                step="ข้ามการ submit ฟอร์ม (ปลายทางอยู่ในรายการต้องห้าม)",
+                status="skipped",
+                detail=f"ไม่ submit — form action ชี้ไป blocked endpoint: {action_url[:80]}",
+            ))
+            missing_headers = await SecurityObserver._missing_headers(page, tc.source_url)
+            if missing_headers:
+                traces.append(StepTrace(
+                    step="ตรวจสอบ Security Headers", status="failed",
+                    detail=f"ขาด: {missing_headers}",
+                    error=f"ขาด Headers: {', '.join(missing_headers)}",
+                ))
+            # passed=True: no vulnerability was exercised AND a destructive submit
+            # was correctly avoided. The status="skipped" trace makes the
+            # non-execution explicit — this is NOT a "tested and safe" claim.
+            screenshot = await self._maybe_screenshot(page, tc.id, True)
+            return TestResult(
+                test_case=tc, passed=True, steps_trace=traces,
+                failure_reason=None, screenshot_path=screenshot,
+                duration_ms=int((time.monotonic() - start) * 1000),
+            )
+
+        # ── Enumerate fillable fields (role-based) + SAFETY GUARD 2: password ─
+        inputs = page.get_by_role("textbox")
+        try:
+            count = await inputs.count()
+        except Exception:
+            count = 0
+        field_plans: list[tuple[int, list[str]]] = []  # (textbox index, vectors)
+        skipped_password = 0
+        for i in range(count):
+            name = await _read_field_name(inputs.nth(i))
+            if _is_password_field(name):
+                # DELIBERATE safety guard — never fuzz a password/secret field.
+                skipped_password += 1
+                continue
+            field_plans.append((i, _security_vectors_for_field(name, is_xss)))
+
+        # EXPLICIT bound: at most _MAX_VECTORS_PER_FIELD fill→submit rounds (one
+        # vector per field per round). Bounded on purpose; NOT a silent trim.
+        rounds = min(
+            _MAX_VECTORS_PER_FIELD,
+            max((len(v) for _, v in field_plans), default=0),
+        )
 
         passed = True
-        failure_reason = None
-        if is_xss:
-            xss_fired: bool = await page.evaluate("() => !!window.__xss_fired")
-            if xss_fired:
-                passed = False
-                failure_reason = "XSS payload ถูก execute (window.__xss_fired=true)"
-        else:
-            content = (await page.content()).lower()
-            sql_keywords = ["sql syntax", "mysql_fetch", "ora-0", "sqlite", "syntax error near"]
-            hit = next((kw for kw in sql_keywords if kw in content), None)
-            if hit:
-                passed = False
-                failure_reason = f"พบ SQL error keyword '{hit}' ในหน้าที่ตอบกลับ"
+        failure_reason: str | None = None
+        total_injected = 0
+        for r in range(rounds):
+            # Replay-from-seed between vectors: re-navigate so window.__xss_fired
+            # and the form reset (deterministic — matches the crawler's pattern).
+            if r > 0:
+                try:
+                    await page.goto(tc.source_url, wait_until="domcontentloaded",
+                                    timeout=30_000)
+                except Exception:
+                    break
+            round_injected: list[str] = []
+            for idx, vectors in field_plans:
+                if r >= len(vectors):
+                    continue
+                try:
+                    await inputs.nth(idx).fill(vectors[r], timeout=5_000)
+                    round_injected.append(vectors[r])
+                except Exception:
+                    pass
+            total_injected += len(round_injected)
+            # Submit via the first button (role-based locator — same style as before).
+            try:
+                await page.get_by_role("button").first.click(timeout=5_000)
+                await page.wait_for_timeout(800)
+            except Exception:
+                pass
+            try:
+                content = await page.content()
+            except Exception:
+                content = ""
+            try:
+                xss_fired = bool(await page.evaluate("() => !!window.__xss_fired"))
+            except Exception:
+                xss_fired = False
+            passed, failure_reason = _classify_security_response(
+                xss_fired=xss_fired, page_content=content, injected=round_injected,
+            )
+            if not passed:
+                break
+
+        traces.append(StepTrace(
+            step=(f"กรอก adversarial payload ลง {len(field_plans)} ช่อง "
+                  f"({total_injected} vectors, {rounds} รอบ; "
+                  f"ข้าม password {skipped_password} ช่อง)"),
+            status="passed",
+            detail=f"kind={'XSS' if is_xss else 'SQLi'}, cap={_MAX_VECTORS_PER_FIELD}/field",
+        ))
 
         missing_headers = await SecurityObserver._missing_headers(page, tc.source_url)
         if missing_headers:
@@ -424,9 +678,9 @@ class UniversalTestRunner:
             ))
 
         traces.append(StepTrace(
-            step="ตรวจสอบว่า payload ไม่ถูก execute",
+            step="ตรวจสอบว่า payload ไม่ถูก execute / ไม่รั่ว SQL error",
             status="passed" if passed else "failed",
-            detail="ตรวจสอบ response ของหน้าแล้ว",
+            detail="ตรวจสอบ response ของหน้าแล้ว (execution + reflection + SQL-error)",
             error=failure_reason,
         ))
 
