@@ -18,7 +18,6 @@ from src.contractskill.sfg import (
 )
 from src.explorer.executor import HypothesisExecutor
 from src.explorer.hypothesis import TestHypothesis
-from src.fuzzer.anomaly_classifier import _SQL_ERROR_RE
 from src.fuzzer.vector_generator import base_vectors_for, infer_field_type
 from src.llm.instructor_client import InstructorClient
 from src.universal_qa.models import StepTrace, TestCase, TestResult
@@ -64,22 +63,45 @@ _PASSWORD_FIELD_KW: tuple[str, ...] = (
     "password", "passwd", "pwd", "pin", "cvv", "cvc", "secret",
 )
 
-# SQL-error markers the reused _SQL_ERROR_RE regex does not already cover.
-_EXTRA_SQL_ERROR_MARKERS: tuple[str, ...] = (
-    "mysql_fetch", "you have an error in your sql", "warning: mysql",
-    "sqlite", "ora-0", "unclosed quotation mark", "odbc",
+# TIGHT SQL-error signatures — specific DB error phrases ONLY. Deliberately NOT
+# bare vendor names ('sqlite'/'odbc'/'ora-0'): a page that merely mentions SQLite
+# or an ODBC driver, or a product code containing 'ora-0', must NOT be flagged.
+# Matched case-insensitively and ONLY on SQLi tests (see _classify_security_response).
+_SQL_ERROR_SIGNATURES: tuple[str, ...] = (
+    "you have an error in your sql syntax",
+    "warning: mysql", "mysqli_", "mysql_fetch",
+    "unclosed quotation mark after the character string",
     "quoted string not properly terminated",
+    "unterminated quoted string",
+    "sqlstate[",
+    "sqlite3.operationalerror", "sqlite_error",
+    "org.postgresql.util.psqlexception", "syntax error at or near",
+    "microsoft ole db provider", "odbc sql server driver",
+    "ora-00933", "ora-00921", "ora-01756", "ora-00920",
 )
 
-# JS (a DOM read, NOT a locator) returning the action URL of the form the
-# security runner would submit — the <form> around the first submit-like button,
-# else the first <form>. Mirrors SFGTraversalExplorer._action_blocked's read.
-_SUBMIT_FORM_ACTION_JS = """() => {
-    const btn = document.querySelector('button, input[type=submit], [role=button]');
-    const form = (btn && btn.closest('form')) || document.querySelector('form');
-    if (!form) return '';
-    return String(form.getAttribute('action') || form.action || '');
-}"""
+# Non-executing HTML regions: a payload reflected INSIDE these is inert (the
+# browser runs no scripts in a <textarea> body or an HTML comment), so such a
+# reflection must NOT be reported as XSS. Stripped before the reflection scan.
+_INERT_TEXTAREA_RE = re.compile(r"<textarea\b[^>]*>.*?</textarea>", re.IGNORECASE | re.DOTALL)
+_INERT_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+
+# JS (a DOM read, NOT a locator) run ON the exact submit control the runner will
+# click — get_by_role("button").first — so the blocked-endpoint guard governs
+# WHAT IS ACTUALLY SUBMITTED. Returns that control's OWN enclosing <form> action
+# (RAW attribute — never the resolved absolute form.action, whose host could
+# false-match a blocked keyword), the form method, and the control's label (so a
+# non-form destructive control like a JS "Logout"/"Delete" is caught by its
+# text). method is "" when the control is not inside a <form>.
+_SUBMIT_TARGET_JS = (
+    "el => {"
+    " const form = el.closest('form');"
+    " const action = form ? String(form.getAttribute('action') || '') : '';"
+    " const method = form ? String(form.getAttribute('method') || 'get').toLowerCase() : '';"
+    " const label = String(el.getAttribute('aria-label') || el.textContent || el.value || '').trim();"
+    " return { action, method, label };"
+    "}"
+)
 
 # JS (a DOM read) computing a field's accessible name from its own element.
 _FIELD_NAME_JS = (
@@ -143,12 +165,20 @@ def _security_vectors_for_field(field_name: str, is_xss: bool) -> list[str]:
     return merged
 
 
+def _strip_inert_html(content: str) -> str:
+    """Remove non-executing regions (<textarea> bodies, HTML comments) so a
+    payload reflected ONLY there is not mistaken for executable reflected XSS."""
+    content = _INERT_TEXTAREA_RE.sub("", content or "")
+    return _INERT_COMMENT_RE.sub("", content)
+
+
 def _find_reflected_xss(page_content: str, injected: list[str]) -> str | None:
-    """First injected HTML/JS vector that appears RAW (unescaped) in the
-    serialized DOM → reflected XSS. Entity-encoded reflections (the app escaped
-    '<' to '&lt;') correctly do NOT match. Pure/offline.
+    """First injected HTML/JS vector that appears RAW (unescaped) in an EXECUTING
+    region of the serialized DOM → reflected XSS. Entity-encoded reflections (the
+    app escaped '<' to '&lt;') AND reflections confined to inert contexts
+    (<textarea>, comments) correctly do NOT match. Pure/offline.
     """
-    content = page_content or ""
+    content = _strip_inert_html(page_content)
     for v in injected:
         if not v:
             continue
@@ -158,37 +188,36 @@ def _find_reflected_xss(page_content: str, injected: list[str]) -> str | None:
 
 
 def _find_sql_error(page_content: str) -> str | None:
-    """First SQL-error marker leaked into the content, or None. Reuses the
-    Sprint-13 _SQL_ERROR_RE regex (broad, vendor-agnostic) plus extra vendor
-    markers it does not cover. Pure/offline — NO HTTP-status coupling (that is
-    why AnomalyClassifier.classify, which is HTTP-only, is NOT reused here).
+    """First TIGHT SQL-error signature leaked into the content, or None. Matches
+    only specific DB error phrases (see _SQL_ERROR_SIGNATURES), never bare vendor
+    names, so a benign page is not misread as SQLi. Pure/offline.
     """
-    content = page_content or ""
-    m = _SQL_ERROR_RE.search(content)
-    if m:
-        return m.group(0)
-    low = content.lower()
-    return next((kw for kw in _EXTRA_SQL_ERROR_MARKERS if kw in low), None)
+    low = (page_content or "").lower()
+    return next((s for s in _SQL_ERROR_SIGNATURES if s in low), None)
 
 
 def _classify_security_response(
-    *, xss_fired: bool, page_content: str, injected: list[str]
+    *, xss_fired: bool, page_content: str, injected: list[str], is_sqli: bool
 ) -> tuple[bool, str | None]:
     """Pure post-submit classifier → (passed, failure_reason). Offline-testable.
 
     Records a vulnerability signal (passed=False) if ANY of:
-      * window.__xss_fired was set           → script EXECUTED.
-      * an injected vector reflects unescaped → reflected XSS.
-      * a SQL-error string leaked             → SQLi signal.
+      * window.__xss_fired was set               → script EXECUTED (definitive).
+      * an injected vector reflects unescaped     → reflected XSS (inert
+        <textarea>/comment contexts excluded).
+      * a SQL-error signature leaked AND this is a SQLi test → SQLi signal. SQL
+        detection is GATED to SQLi tests so an XSS run against a page that merely
+        mentions a database is never reported as a SQL injection.
     """
     if xss_fired:
         return False, "XSS payload ถูก execute (window.__xss_fired=true)"
     reflected = _find_reflected_xss(page_content, injected)
     if reflected:
         return False, f"XSS payload สะท้อนกลับแบบ unescaped ในหน้า: {reflected[:80]}"
-    sql_hit = _find_sql_error(page_content)
-    if sql_hit:
-        return False, f"พบ SQL error keyword '{sql_hit}' ในหน้าที่ตอบกลับ"
+    if is_sqli:
+        sql_hit = _find_sql_error(page_content)
+        if sql_hit:
+            return False, f"พบ SQL error signature '{sql_hit}' ในหน้าที่ตอบกลับ"
     return True, None
 
 
@@ -200,6 +229,37 @@ async def _read_field_name(locator) -> str:
     except Exception:
         return ""
     return (name or "").strip()
+
+
+# Text-input ARIA roles the security runner fuzzes. Includes searchbox
+# (<input type=search>) so those fields are covered, not silently skipped;
+# deliberately excludes spinbutton (numeric) and combobox (may be a <select>).
+_FILLABLE_ROLES: tuple[str, ...] = ("textbox", "searchbox")
+
+
+async def _plan_fillable_fields(page, is_xss: bool):
+    """Enumerate fuzzable, non-password text fields on the CURRENT page and pair
+    each with its adversarial vectors. Run FRESH per round so a DOM change across
+    a navigation can never map a stale index onto the wrong field (which could
+    otherwise fill a password/secret field). Returns (plans, skipped_password)
+    where plans is a list of (field_locator, vectors)."""
+    plans: list[tuple[object, list[str]]] = []
+    skipped_password = 0
+    for role in _FILLABLE_ROLES:
+        loc = page.get_by_role(role)
+        try:
+            n = await loc.count()
+        except Exception:
+            n = 0
+        for i in range(n):
+            field = loc.nth(i)
+            name = await _read_field_name(field)
+            if _is_password_field(name):
+                skipped_password += 1
+                continue
+            plans.append((field, _security_vectors_for_field(name, is_xss)))
+    return plans, skipped_password
+
 
 # Thai action keywords → English equivalents ที่ HypothesisExecutor เข้าใจ
 _THAI_NAV = re.compile(r'^(เปิดหน้า|ไปที่หน้า|ไปที่|นำทางไปยัง|เปิด)\s+', re.IGNORECASE)
@@ -561,89 +621,80 @@ class UniversalTestRunner:
                 duration_ms=int((time.monotonic() - start) * 1000),
             )
 
-        # ── SAFETY GUARD 1: blocked-endpoint / read-safe scoping ─────────────
-        # Inspect the form we WOULD submit BEFORE touching it. If its action
-        # targets a destructive/credential endpoint (same sfg frozenset the
-        # crawler refuses to click), SKIP submission entirely — recorded HONESTLY
-        # as "skipped" (never a misleading pass/fail). The header audit still
-        # runs (read-only GET). This closes a real gap: the old runner filled and
-        # submitted with NO endpoint guard.
+        # ── SAFETY GUARD 1: inspect the ACTUAL submit control we will click ───
+        # Read the form action + method + label of get_by_role("button").first —
+        # the exact control clicked below — so the blocked-endpoint guard governs
+        # WHAT IS ACTUALLY SUBMITTED. (The old code queried a separate <form> via
+        # CSS, which could differ from the clicked button's form, and could pass a
+        # non-form JS "Logout"/"Delete" button straight through.) SKIP (honest
+        # "skipped") when the control's form action OR its own label matches the
+        # sfg blocked frozenset.
+        submit = page.get_by_role("button").first
         try:
-            action_url = await page.evaluate(_SUBMIT_FORM_ACTION_JS)
+            target = await submit.evaluate(_SUBMIT_TARGET_JS)
         except Exception:
-            action_url = ""
-        if _is_blocked_action(action_url):
+            target = {"action": "", "method": "", "label": ""}
+        action = str(target.get("action") or "")
+        label = str(target.get("label") or "")
+        method = str(target.get("method") or "").lower()
+        if _is_blocked_action(action) or _is_blocked_action(label):
             traces.append(StepTrace(
-                step="ข้ามการ submit ฟอร์ม (ปลายทางอยู่ในรายการต้องห้าม)",
+                step="ข้ามการ submit (ปลายทาง/ปุ่มอยู่ในรายการต้องห้าม)",
                 status="skipped",
-                detail=f"ไม่ submit — form action ชี้ไป blocked endpoint: {action_url[:80]}",
+                detail=f"ไม่ submit — blocked target: action={action[:60]!r} label={label[:40]!r}",
             ))
-            missing_headers = await SecurityObserver._missing_headers(page, tc.source_url)
-            if missing_headers:
-                traces.append(StepTrace(
-                    step="ตรวจสอบ Security Headers", status="failed",
-                    detail=f"ขาด: {missing_headers}",
-                    error=f"ขาด Headers: {', '.join(missing_headers)}",
-                ))
-            # passed=True: no vulnerability was exercised AND a destructive submit
-            # was correctly avoided. The status="skipped" trace makes the
-            # non-execution explicit — this is NOT a "tested and safe" claim.
-            screenshot = await self._maybe_screenshot(page, tc.id, True)
-            return TestResult(
-                test_case=tc, passed=True, steps_trace=traces,
-                failure_reason=None, screenshot_path=screenshot,
-                duration_ms=int((time.monotonic() - start) * 1000),
-            )
+            return await self._finish_security_skipped(tc, page, traces, start)
 
-        # ── Enumerate fillable fields (role-based) + SAFETY GUARD 2: password ─
-        inputs = page.get_by_role("textbox")
-        try:
-            count = await inputs.count()
-        except Exception:
-            count = 0
-        field_plans: list[tuple[int, list[str]]] = []  # (textbox index, vectors)
-        skipped_password = 0
-        for i in range(count):
-            name = await _read_field_name(inputs.nth(i))
-            if _is_password_field(name):
-                # DELIBERATE safety guard — never fuzz a password/secret field.
-                skipped_password += 1
-                continue
-            field_plans.append((i, _security_vectors_for_field(name, is_xss)))
+        # READ-SAFE round budget: a GET form is idempotent → multi-round fuzzing is
+        # safe; a POST form (or a non-form control, method="") mutates → submit AT
+        # MOST ONCE (matching the old single-submit runner), so an XSS/SQLi fuzz of
+        # a comment/register/add-to-cart form can't create N stored records.
+        max_rounds = _MAX_VECTORS_PER_FIELD if method == "get" else 1
 
-        # EXPLICIT bound: at most _MAX_VECTORS_PER_FIELD fill→submit rounds (one
-        # vector per field per round). Bounded on purpose; NOT a silent trim.
-        rounds = min(
-            _MAX_VECTORS_PER_FIELD,
-            max((len(v) for _, v in field_plans), default=0),
-        )
+        # ── Fuzzable field discovery (textbox + searchbox; password skipped) ──
+        plans, skipped_password = await _plan_fillable_fields(page, is_xss)
+        if not plans:
+            # Nothing fuzzable → NOT a "tested and safe" pass; record an honest
+            # skip so the QA report never claims a page was security-tested when
+            # no payload was ever injected.
+            traces.append(StepTrace(
+                step="ข้ามการทดสอบ security (ไม่มีช่องกรอกที่ fuzz ได้)",
+                status="skipped",
+                detail=f"ไม่พบ text field ที่ fuzz ได้ (ข้าม password {skipped_password} ช่อง)",
+            ))
+            return await self._finish_security_skipped(tc, page, traces, start)
+
+        rounds = min(max_rounds, max((len(v) for _, v in plans), default=0))
 
         passed = True
         failure_reason: str | None = None
         total_injected = 0
+        xss_ever = False
         for r in range(rounds):
-            # Replay-from-seed between vectors: re-navigate so window.__xss_fired
-            # and the form reset (deterministic — matches the crawler's pattern).
+            # Replay-from-seed: re-navigate to the ORIGINAL url so the form and
+            # window.__xss_fired reset deterministically between vectors.
             if r > 0:
                 try:
                     await page.goto(tc.source_url, wait_until="domcontentloaded",
                                     timeout=30_000)
                 except Exception:
                     break
+            # Re-enumerate fresh each round (robust to any DOM change; password is
+            # re-checked here so a stale index can never fill a secret field).
+            round_plans, _ = await _plan_fillable_fields(page, is_xss)
             round_injected: list[str] = []
-            for idx, vectors in field_plans:
+            for field, vectors in round_plans:
                 if r >= len(vectors):
                     continue
                 try:
-                    await inputs.nth(idx).fill(vectors[r], timeout=5_000)
+                    await field.fill(vectors[r], timeout=5_000)
                     round_injected.append(vectors[r])
                 except Exception:
                     pass
             total_injected += len(round_injected)
-            # Submit via the first button (role-based locator — same style as before).
             try:
-                await page.get_by_role("button").first.click(timeout=5_000)
-                await page.wait_for_timeout(800)
+                await submit.click(timeout=5_000)
+                await page.wait_for_timeout(1_000)
             except Exception:
                 pass
             try:
@@ -654,15 +705,19 @@ class UniversalTestRunner:
                 xss_fired = bool(await page.evaluate("() => !!window.__xss_fired"))
             except Exception:
                 xss_fired = False
+            # OR across rounds so a flag set late in an earlier round is not lost
+            # when the next round re-navigates and clears it.
+            xss_ever = xss_ever or xss_fired
             passed, failure_reason = _classify_security_response(
-                xss_fired=xss_fired, page_content=content, injected=round_injected,
+                xss_fired=xss_ever, page_content=content,
+                injected=round_injected, is_sqli=not is_xss,
             )
             if not passed:
                 break
 
         traces.append(StepTrace(
-            step=(f"กรอก adversarial payload ลง {len(field_plans)} ช่อง "
-                  f"({total_injected} vectors, {rounds} รอบ; "
+            step=(f"กรอก adversarial payload ลง {len(plans)} ช่อง "
+                  f"({total_injected} vectors, {rounds} รอบ, method={method or 'n/a'}; "
                   f"ข้าม password {skipped_password} ช่อง)"),
             status="passed",
             detail=f"kind={'XSS' if is_xss else 'SQLi'}, cap={_MAX_VECTORS_PER_FIELD}/field",
@@ -688,6 +743,27 @@ class UniversalTestRunner:
         return TestResult(
             test_case=tc, passed=passed, steps_trace=traces,
             failure_reason=failure_reason, screenshot_path=screenshot,
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    async def _finish_security_skipped(
+        self, tc: TestCase, page: Page, traces: list[StepTrace], start: float
+    ) -> TestResult:
+        """Finish a security test that was SKIPPED (blocked target or no fuzzable
+        field): run the read-only header audit, then return passed=True. A
+        status='skipped' trace is already recorded, so this is NOT a
+        'tested and safe' claim — nothing was fuzzed."""
+        missing_headers = await SecurityObserver._missing_headers(page, tc.source_url)
+        if missing_headers:
+            traces.append(StepTrace(
+                step="ตรวจสอบ Security Headers", status="failed",
+                detail=f"ขาด: {missing_headers}",
+                error=f"ขาด Headers: {', '.join(missing_headers)}",
+            ))
+        screenshot = await self._maybe_screenshot(page, tc.id, True)
+        return TestResult(
+            test_case=tc, passed=True, steps_trace=traces, failure_reason=None,
+            screenshot_path=screenshot,
             duration_ms=int((time.monotonic() - start) * 1000),
         )
 

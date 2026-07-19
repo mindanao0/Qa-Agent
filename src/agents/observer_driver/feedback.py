@@ -111,10 +111,9 @@ def distill_feedback(
 
     # 6. Surface at most MAX_DIRECTIVES.
     selected = survivors[:MAX_DIRECTIVES]
-    top_severity: Severity = max(
-        (c.severity for c in selected),
-        key=lambda s: _SEVERITY_RANK[s],
-    )
+    # survivors is sorted severity-descending, so the first surfaced candidate
+    # already carries the highest severity — no need to re-scan the slice.
+    top_severity: Severity = selected[0].severity
     return DriverFeedback(
         from_step=step,
         directives=[c.finding for c in selected],
