@@ -93,4 +93,5 @@ xformers = ["torch"]
 dev = [
     "ruff>=0.7.0",
     "mypy>=1.13.0",
+    "pytest-timeout>=2.4.0",
 ]
