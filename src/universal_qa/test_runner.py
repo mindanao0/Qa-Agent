@@ -59,9 +59,11 @@ _MAX_VECTORS_PER_FIELD = 5
 # textbox role. Playwright's get_by_role("textbox") already excludes
 # <input type=password> (no textbox ARIA role); this is belt-and-suspenders for
 # a mislabeled / role-overridden secret field.
-_PASSWORD_FIELD_KW: tuple[str, ...] = (
-    "password", "passwd", "pwd", "pin", "cvv", "cvc", "secret",
-)
+# Long, unambiguous keywords match as SUBSTRINGS ("confirmPassword", "user_passwd");
+# short collision-prone ones match only as WHOLE tokens (name split on non-alnum) so
+# "shipping"/"opinion" ($pin) and "secretary" ($secret) are NOT false-skipped.
+_PASSWORD_SUBSTR_KW: tuple[str, ...] = ("password", "passwd")
+_PASSWORD_TOKEN_KW: frozenset[str] = frozenset({"pwd", "pin", "cvv", "cvc", "secret"})
 
 # TIGHT SQL-error signatures — specific DB error phrases ONLY. Deliberately NOT
 # bare vendor names ('sqlite'/'odbc'/'ora-0'): a page that merely mentions SQLite
@@ -77,8 +79,11 @@ _SQL_ERROR_SIGNATURES: tuple[str, ...] = (
     "sqlite3.operationalerror", "sqlite_error",
     "org.postgresql.util.psqlexception", "syntax error at or near",
     "microsoft ole db provider", "odbc sql server driver",
-    "ora-00933", "ora-00921", "ora-01756", "ora-00920",
 )
+
+# Oracle errors are ORA-<5 digits> — a regex catches the whole family precisely
+# without false-matching a bare 'ora-0' inside a product code.
+_SQL_ORA_RE = re.compile(r"ora-\d{5}", re.IGNORECASE)
 
 # Non-executing HTML regions: a payload reflected INSIDE these is inert (the
 # browser runs no scripts in a <textarea> body or an HTML comment), so such a
@@ -96,8 +101,12 @@ _INERT_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _SUBMIT_TARGET_JS = (
     "el => {"
     " const form = el.closest('form');"
-    " const action = form ? String(form.getAttribute('action') || '') : '';"
-    " const method = form ? String(form.getAttribute('method') || 'get').toLowerCase() : '';"
+    " const fa = el.getAttribute('formaction');"     # button override wins over form
+    " const fm = el.getAttribute('formmethod');"
+    " const action = fa != null ? String(fa)"
+    "   : (form ? String(form.getAttribute('action') || '') : '');"
+    " const method = String(fm"
+    "   || (form ? (form.getAttribute('method') || 'get') : '')).toLowerCase();"
     " const label = String(el.getAttribute('aria-label') || el.textContent || el.value || '').trim();"
     " return { action, method, label };"
     "}"
@@ -117,12 +126,15 @@ _FIELD_NAME_JS = (
 
 
 def _is_password_field(field_name: str) -> bool:
-    """True if a field's accessible name looks like a credential/secret.
-
-    Used as an EXPLICIT, deliberate safety guard — such a field is never fuzzed.
+    """True if a field's accessible name looks like a credential/secret. EXPLICIT
+    safety guard — such a field is never fuzzed. Long keywords match as
+    substrings; short/ambiguous ones only as whole tokens, so ordinary fields like
+    'shipping'/'opinion'/'secretary' are not false-skipped.
     """
     low = (field_name or "").lower()
-    return any(k in low for k in _PASSWORD_FIELD_KW)
+    if any(k in low for k in _PASSWORD_SUBSTR_KW):
+        return True
+    return any(t in _PASSWORD_TOKEN_KW for t in re.split(r"[^a-z0-9]+", low) if t)
 
 
 def _is_blocked_action(action_url: str) -> bool:
@@ -193,7 +205,11 @@ def _find_sql_error(page_content: str) -> str | None:
     names, so a benign page is not misread as SQLi. Pure/offline.
     """
     low = (page_content or "").lower()
-    return next((s for s in _SQL_ERROR_SIGNATURES if s in low), None)
+    hit = next((s for s in _SQL_ERROR_SIGNATURES if s in low), None)
+    if hit:
+        return hit
+    m = _SQL_ORA_RE.search(low)
+    return m.group(0) if m else None
 
 
 def _classify_security_response(
@@ -669,7 +685,6 @@ class UniversalTestRunner:
         passed = True
         failure_reason: str | None = None
         total_injected = 0
-        xss_ever = False
         for r in range(rounds):
             # Replay-from-seed: re-navigate to the ORIGINAL url so the form and
             # window.__xss_fired reset deterministically between vectors.
@@ -705,11 +720,11 @@ class UniversalTestRunner:
                 xss_fired = bool(await page.evaluate("() => !!window.__xss_fired"))
             except Exception:
                 xss_fired = False
-            # OR across rounds so a flag set late in an earlier round is not lost
-            # when the next round re-navigates and clears it.
-            xss_ever = xss_ever or xss_fired
+            # The 1000ms settle above (restored from the old runner) is the real
+            # deferred-execution mitigation; we break on the first fire, so there
+            # is no cross-round flag to accumulate.
             passed, failure_reason = _classify_security_response(
-                xss_fired=xss_ever, page_content=content,
+                xss_fired=xss_fired, page_content=content,
                 injected=round_injected, is_sqli=not is_xss,
             )
             if not passed:

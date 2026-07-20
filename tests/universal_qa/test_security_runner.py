@@ -27,9 +27,12 @@ from src.universal_qa.test_runner import (
 # ─────────────────────────── PURE HELPERS ───────────────────────────────────
 
 def test_password_field_guard():
-    for name in ("Password", "Confirm Password", "passwd", "pwd", "PIN", "CVV", "secret key"):
+    for name in ("Password", "Confirm Password", "confirmPassword", "user_passwd",
+                 "passwd", "pwd", "PIN", "card pin", "CVV", "secret key"):
         assert _is_password_field(name), name
-    for name in ("Username", "Email", "Search", "Comment", "First name", ""):
+    # over-match regression: short keywords must match as WHOLE tokens only
+    for name in ("Username", "Email", "Search", "Comment", "First name", "",
+                 "shipping", "opinion", "secretary", "spinner"):
         assert not _is_password_field(name), name
 
 
@@ -112,6 +115,15 @@ def test_find_sql_error_matches_specific_signatures():
     assert _find_sql_error("Warning: mysql_fetch_array() expects")
     assert _find_sql_error("ORA-00933: SQL command not properly ended")
     assert _find_sql_error("all good, welcome home") is None
+
+
+def test_find_sql_error_oracle_family_via_regex():
+    """Whole ORA-<5 digit> family detected (not just a hand-enumerated few), but a
+    bare 'ora-0'/short code inside product text is not."""
+    assert _find_sql_error("ORA-00933: SQL command not properly ended")
+    assert _find_sql_error("ORA-12899: value too large for column")
+    assert _find_sql_error("product code Aurora-0 in stock") is None
+    assert _find_sql_error("apply ORA-9 hotfix") is None
 
 
 def test_find_sql_error_ignores_bare_vendor_names():
