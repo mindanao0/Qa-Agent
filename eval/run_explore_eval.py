@@ -113,7 +113,7 @@ async def _dedup_probe(page, urls: list[str]) -> tuple[float | None, int]:
 
 
 async def eval_target(t: dict, mode: str = "baseline", headless: bool = True,
-                      preauth: bool = True) -> dict:
+                      preauth: bool = True, safe_mode: bool = True) -> dict:
     res: dict = {"target_id": t["target_id"], "seed_url": t["seed_url"],
                  "expected_states_min": t["expected_states_min"]}
     t0 = time.monotonic()
@@ -137,7 +137,8 @@ async def eval_target(t: dict, mode: str = "baseline", headless: bool = True,
 
             if mode == "sfg":
                 store = SFGStore(db_path=Path(tempfile.mkdtemp(prefix="uqa_sfg_")) / "sfg.db")
-                crawler = SFGTraversalExplorer(store, max_states=150, time_budget_s=180)
+                crawler = SFGTraversalExplorer(store, max_states=150, time_budget_s=180,
+                                               safe_mode=safe_mode)
                 await crawler.explore(page, seed, creds)
                 states_discovered = store.node_count()
                 node_urls = [n.url for n in store.get_nodes_by_url_prefix(base)]
@@ -209,7 +210,7 @@ async def eval_target(t: dict, mode: str = "baseline", headless: bool = True,
 
 
 async def run(golden: Path, label: str, mode: str, limit: int | None, only: str | None,
-              headless: bool, preauth: bool = True) -> dict:
+              headless: bool, preauth: bool = True, safe_mode: bool = True) -> dict:
     targets = [json.loads(l) for l in golden.read_text(encoding="utf-8").splitlines() if l.strip()]
     if only:
         targets = [t for t in targets if t["target_id"] == only]
@@ -219,7 +220,8 @@ async def run(golden: Path, label: str, mode: str, limit: int | None, only: str 
     per = []
     for i, t in enumerate(targets, 1):
         logger.info(f"[{i}/{len(targets)}] {t['target_id']} — {t['seed_url']} (mode={mode})")
-        per.append(await eval_target(t, mode=mode, headless=headless, preauth=preauth))
+        per.append(await eval_target(t, mode=mode, headless=headless, preauth=preauth,
+                                     safe_mode=safe_mode))
 
     ok = [p for p in per if "states_discovered" in p]
     def _avg(key):
@@ -258,10 +260,16 @@ def main() -> None:
     ap.add_argument("--headed", action="store_true")
     ap.add_argument("--no-preauth", action="store_true",
                     help="skip AuthManager pre-auth so the crawler must log in itself (form track)")
+    ap.add_argument("--allow-full-flow", action="store_true",
+                    help="disable safe_mode (sfg mode only): let the crawler carry checkout/"
+                         "register/etc. forms to completion instead of stopping at "
+                         "login/search/filter/apply. Use ONLY against known sandbox/test "
+                         "targets, never a production or unfamiliar site.")
     args = ap.parse_args()
 
     summary = asyncio.run(run(Path(args.golden), args.label, args.mode, args.limit,
-                              args.only, headless=not args.headed, preauth=not args.no_preauth))
+                              args.only, headless=not args.headed, preauth=not args.no_preauth,
+                              safe_mode=not args.allow_full_flow))
     print(json.dumps(summary["metrics"], indent=2, ensure_ascii=False))
     for p in summary["per_target"]:
         sd, rc, dp = p.get("states_discovered"), p.get("reachable_coverage"), p.get("dedup_precision")
