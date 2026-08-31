@@ -63,7 +63,9 @@ _DOM_SIG_JS = """() => {
 }"""
 
 
-def _is_blocked(label: str) -> bool:
+def _is_blocked(label: str, safe_mode: bool = True) -> bool:
+    if not safe_mode:
+        return False
     low = (label or "").lower()
     return any(p in low for p in BLOCKED_ACTION_PATTERNS)
 
@@ -83,9 +85,16 @@ class SFGTraversalExplorer:
         max_states: int = 150,
         time_budget_s: float = 180.0,
         a11y_threshold: float = 0.05,
+        safe_mode: bool = True,
     ) -> None:
         self._store = store
         self._scanner = ElementScanner()
+        # safe_mode=True (default): never click/submit BLOCKED_ACTION_PATTERNS
+        # labels or endpoints, and only auto-fill+submit login/search/filter/apply
+        # forms. safe_mode=False: lets the crawler carry a form all the way to
+        # completion (checkout, registration, ...) — only use against known
+        # sandbox/test targets, never against a production or unknown site.
+        self.safe_mode = safe_mode
         self.max_depth = max_depth
         self.max_actions = max_actions_per_node
         self.max_states = max_states
@@ -186,10 +195,11 @@ class SFGTraversalExplorer:
             return "test"
         return _dummy_for_type("text")
 
-    @staticmethod
-    async def _action_blocked(page: Page, cand: ElementCandidate) -> bool:
+    async def _action_blocked(self, page: Page, cand: ElementCandidate) -> bool:
         """True if the submit button's <form> action targets a BLOCKED endpoint
         (transfer/payment/delete/logout) — defense beyond button text (F2)."""
+        if not self.safe_mode:
+            return False
         name = (cand.name or cand.label or "").strip().lower()
         if not name:
             return False
@@ -384,7 +394,7 @@ class SFGTraversalExplorer:
             for cand in cands[: self.max_actions]:
                 if (cand.role or "") in _FILL_ROLES:
                     continue  # inputs are filled within a submit compound, not clicked alone
-                if _is_blocked(cand.label):
+                if _is_blocked(cand.label, self.safe_mode):
                     self.blocked += 1
                     if has_inputs and any(k in (cand.label or "").lower() for k in _SUBMIT_KW):
                         self.blocked_submits += 1  # refused to submit a blocked form
@@ -397,7 +407,8 @@ class SFGTraversalExplorer:
                 # form, fill the form's inputs (creds-aware, PII-safe). Recorded as fill
                 # steps so the edge's replay reproduces it (values re-derived, never stored).
                 fill_steps: list[dict] = []
-                is_safe_submit = any(k in (cand.label or "").lower() for k in _SAFE_SUBMIT_KW)
+                _submit_kw = _SAFE_SUBMIT_KW if self.safe_mode else _SUBMIT_KW
+                is_safe_submit = any(k in (cand.label or "").lower() for k in _submit_kw)
                 if is_safe_submit and has_inputs and await self._action_blocked(page, cand):
                     self.blocked_submits += 1  # safe-looking button, but form posts to a blocked endpoint
                     continue
