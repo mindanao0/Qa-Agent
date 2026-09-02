@@ -540,11 +540,12 @@ def _build_prompt(spec: FunctionSpec) -> str:
                 f"  assert db.get_edges_from('node_a') != []"
             )
         elif is_counter:
+            _arg_stub = ", ".join('"test"' for a in spec.args)
             call_hint = (
                 f"IMPORTANT: `{spec.func_name}` is a METHOD of class `{spec.class_name}`. "
                 f"Instantiate with a temp db path:\n"
                 f"  db = {db_init}\n"
-                f"  result = db.{spec.func_name}({', '.join('\"test\"' for a in spec.args)})\n"
+                f"  result = db.{spec.func_name}({_arg_stub})\n"
                 f"  assert result == 0 or result is None or result == []\n"
                 f"NEVER call db.add_node() or db.insert() — those methods DO NOT EXIST.\n"
                 f"NEVER construct SFGNode/SFGEdge directly with positional args."
