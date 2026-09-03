@@ -159,7 +159,6 @@ async def _measure_one_with_grounder(
                 result["source"] = pam.source
 
                 # Plan with grounder page state
-                from src.llm.structured import TestPlan
                 test_plan = await planner.plan(
                     requirement=requirement,
                     url=url,

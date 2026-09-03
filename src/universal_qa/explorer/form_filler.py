@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Literal
 
 from loguru import logger
 from playwright.async_api import Page

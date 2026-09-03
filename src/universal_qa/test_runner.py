@@ -5,7 +5,6 @@ import re
 import time
 from urllib.parse import urljoin, urlparse
 
-from loguru import logger
 from playwright.async_api import Page
 
 from src.agents.observer_driver.observers.accessibility_observer import (

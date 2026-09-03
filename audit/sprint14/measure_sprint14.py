@@ -40,7 +40,7 @@ from playwright.async_api import async_playwright
 
 from src.codetest import ast_parser
 from src.codetest.ast_parser import FunctionSpec
-from src.fuzzer.schema_inferrer import InferredSchema, SchemaInferrer
+from src.fuzzer.schema_inferrer import SchemaInferrer
 from src.observability.audit_chain import CryptoAuditTrail
 from src.observability.tracer import OTelTracer
 from src.pbt.hypothesis_runner import (

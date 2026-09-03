@@ -236,7 +236,6 @@ async def main() -> dict:
                     # Fuzz each endpoint (its own breaker + OTel span).
                     for (endpoint, method), reqs in per_endpoint.items():
                         resp_schema = schemas_by_key[(endpoint, method)].response_schema or None
-                        before = len(all_results)
                         results = await fuzzer.fuzz_endpoint(
                             f"{method} {endpoint}", reqs, page, classifier, resp_schema
                         )

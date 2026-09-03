@@ -27,7 +27,7 @@ class TerminalReporter:
         print("\n" + "=" * 70)
         print(f"  SUMMARY  total={total}  passed={passed}  failed={failed}")
         if failed > 0:
-            print(f"\n  Failed tests:")
+            print("\n  Failed tests:")
             for r in results:
                 if not r.passed:
                     print(f"    - [{r.test_case.type}] {r.test_case.title}")

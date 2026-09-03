@@ -14,7 +14,7 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict
 
 from src.codetest.generator import GeneratedTest
-from src.llm.instructor_client import InstructorClient, StructuredGenerationError
+from src.llm.instructor_client import InstructorClient
 
 
 class MetamorphicCheckResult(BaseModel):

@@ -163,7 +163,7 @@ async def ai_heal(
 
 # Heavy imports kept inside the class file but lazy where possible so the
 # legacy ai_heal() path above stays untouched.
-from src.healing.fuzzy_matcher import FuzzyCandidate, FuzzyMatcher  # noqa: E402
+from src.healing.fuzzy_matcher import FuzzyMatcher  # noqa: E402
 from src.memory.episodic_store import (  # noqa: E402
     EpisodicStore,
     HealedExperience,

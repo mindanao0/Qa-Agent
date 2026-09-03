@@ -40,7 +40,14 @@ async def test_explore_records_navigation(tmp_path):
     page.url = "https://x.com/start"
     page.goto = AsyncMock()
     page.title = AsyncMock(return_value="Start")
-    page.evaluate = AsyncMock(return_value="{}")  # localStorage snapshot
+    # `page.evaluate` serves two different call sites with different return
+    # shapes: _MENU_OPENER_JS yields a list of {name, role} dicts, while
+    # _snapshot_state yields a JSON string. A single return_value made
+    # _expand_menus iterate a str and blow up on `op.get(...)`, which the
+    # explore() loop swallowed as a failed page — leaving pages empty.
+    async def _evaluate(js, *args):
+        return [] if "getComputedStyle" in js else "{}"
+    page.evaluate = AsyncMock(side_effect=_evaluate)
     page.wait_for_load_state = AsyncMock()
 
     # No interactive elements found → page recorded with no actions

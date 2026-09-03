@@ -540,11 +540,12 @@ def _build_prompt(spec: FunctionSpec) -> str:
                 f"  assert db.get_edges_from('node_a') != []"
             )
         elif is_counter:
+            _arg_stub = ", ".join('"test"' for a in spec.args)
             call_hint = (
                 f"IMPORTANT: `{spec.func_name}` is a METHOD of class `{spec.class_name}`. "
                 f"Instantiate with a temp db path:\n"
                 f"  db = {db_init}\n"
-                f"  result = db.{spec.func_name}({', '.join('\"test\"' for a in spec.args)})\n"
+                f"  result = db.{spec.func_name}({_arg_stub})\n"
                 f"  assert result == 0 or result is None or result == []\n"
                 f"NEVER call db.add_node() or db.insert() — those methods DO NOT EXIST.\n"
                 f"NEVER construct SFGNode/SFGEdge directly with positional args."
@@ -625,24 +626,24 @@ def _ensure_import(test_code: str, spec: FunctionSpec) -> str:
         # Remove any lines already in preamble (avoids duplicates)
         return stripped not in preamble_set
 
-    body_lines = [l for l in test_code.splitlines() if _should_keep(l)]
+    body_lines = [ln for ln in test_code.splitlines() if _should_keep(ln)]
     result = "\n".join(preamble) + "\n" + "\n".join(body_lines)
 
     # If no def test_... present, wrap all non-import code in a def test_...()
     if not _re.search(r"\bdef\s+test_", result):
         import_end_idx = 0
         result_lines = result.splitlines()
-        for i, l in enumerate(result_lines):
+        for i, ln in enumerate(result_lines):
             # Only count TOP-LEVEL (non-indented) imports so that imports
             # inside a nested async def _run(): body are not mistakenly
             # treated as the preamble boundary.
-            if not l.startswith((" ", "\t")) and l.strip().startswith(("import ", "from ")):
+            if not ln.startswith((" ", "\t")) and ln.strip().startswith(("import ", "from ")):
                 import_end_idx = i + 1
-        non_import = [l for l in result_lines[import_end_idx:] if l.strip()]
+        non_import = [ln for ln in result_lines[import_end_idx:] if ln.strip()]
         if non_import:
-            indented = ["    " + l for l in non_import]
+            indented = ["    " + ln for ln in non_import]
             # Add a basic assert if there are none
-            if not any(l.strip().startswith("assert") for l in non_import):
+            if not any(ln.strip().startswith("assert") for ln in non_import):
                 indented.append("    assert True  # execution test — verifies no exceptions raised")
             result = "\n".join(result_lines[:import_end_idx]) + f"\ndef test_{spec.func_name}():\n" + "\n".join(indented)
 
@@ -652,13 +653,13 @@ def _ensure_import(test_code: str, spec: FunctionSpec) -> str:
         # Replace `result = obj.method(` → `result = asyncio.run(obj.method(`
         result = _re.sub(
             rf"(\s*\w+\s*=\s*)(\w+\.{method}\s*\()",
-            rf"\1asyncio.run(\2",
+            r"\1asyncio.run(\2",
             result,
         )
         # Close the extra paren — find lines we modified (those have unbalanced parens from above)
         fixed_lines = []
         for line in result.splitlines():
-            if f"asyncio.run(" in line and f".{method}(" in line:
+            if "asyncio.run(" in line and f".{method}(" in line:
                 # Count parens to see if we need to close
                 opens = line.count("(")
                 closes = line.count(")")

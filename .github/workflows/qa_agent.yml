@@ -38,7 +38,7 @@ jobs:
         run: pip install uv
 
       - name: Cache uv pip
-        uses: actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9 # v4.0.2
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/uv
           key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
@@ -71,7 +71,7 @@ jobs:
         run: pip install uv
 
       - name: Cache uv pip
-        uses: actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9 # v4.0.2
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/uv
           key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
@@ -81,7 +81,25 @@ jobs:
         run: uv pip install -e "." --system
 
       - name: Run unit tests
-        run: uv run pytest tests/unit/ tests/observability/ -v --tb=short --timeout=60
+        # Covers every suite that runs without live Ollama, a browser, or a
+        # training dataset. Was tests/unit + tests/observability only (25 of the
+        # repo's 628 collected tests, ~4%); this raises the gate to ~403.
+        #
+        # Not included, deliberately:
+        #   tests/*.py (root)  — need live Ollama / Chromium; test-e2e covers them
+        #   tests/finetune     — hard-require data/training/train.jsonl, gitignored
+        #   ci/tests           — outside pytest testpaths, needs ci/conftest_ci.py
+        # The two deselected cases spawn nested `uv run pytest` subprocesses,
+        # which re-resolve the whole project (incl. the CUDA torch wheel) inside
+        # the job; test-e2e is the right place for them.
+        run: |
+          uv run pytest \
+            tests/unit tests/observability tests/codetest tests/continuous \
+            tests/explorer tests/fuzzer tests/parallel tests/pbt tests/race \
+            tests/universal_qa \
+            --deselect tests/codetest/test_executor.py::test_executor_passes_simple_test \
+            --deselect tests/pbt/test_hypothesis_runner.py::test_run_finds_real_counterexample_and_passes_holding \
+            -v --tb=short --timeout=120
 
   test-e2e:
     name: test-e2e
@@ -106,14 +124,14 @@ jobs:
         run: pip install uv
 
       - name: Cache uv pip
-        uses: actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9 # v4.0.2
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/uv
           key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
           restore-keys: uv-${{ runner.os }}-
 
       - name: Cache Playwright browsers
-        uses: actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9 # v4.0.2
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-chromium

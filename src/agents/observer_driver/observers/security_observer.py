@@ -9,7 +9,6 @@ Per ``driver_action`` event of type ``navigate`` or ``click`` the observer:
 from __future__ import annotations
 
 import time
-from urllib.parse import urlparse
 
 from playwright.async_api import Page
 
