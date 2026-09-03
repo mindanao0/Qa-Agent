@@ -583,7 +583,7 @@ class UniversalTestPlanner:
                             f"เปิดหน้า {page.url}",
                             f"กรอก {kind} payload ลงทุกช่องรับข้อมูล: {payload}",
                             "กด submit form",
-                            f"ตรวจสอบว่า payload ไม่ทำงาน",
+                            "ตรวจสอบว่า payload ไม่ทำงาน",
                         ],
                         expected_outcome=f"หน้าเว็บไม่ได้รับผลกระทบจาก {kind} payload",
                         source_url=page.url,

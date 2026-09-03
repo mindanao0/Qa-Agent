@@ -149,7 +149,6 @@ def _sanitize_test_code(code: str) -> str:
                 # Take everything up to the next ', or end of line
                 # Heuristic: the description ends at the last ', on the line
                 # Replace the it(' or describe(' with it(" or describe("
-                rest_fixed = rest.replace("'", "\\'")
                 out.append(line)
                 continue
             description = rest[:close_idx]

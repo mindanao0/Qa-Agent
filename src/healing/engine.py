@@ -1,7 +1,5 @@
-import asyncio
 import json
 import os
-import time
 from difflib import unified_diff
 from pathlib import Path
 from typing import Any
@@ -13,7 +11,7 @@ from playwright.async_api import Page
 from src.browser.ax_extractor import extract_axtree, prune_axtree
 from src.llm.adapter import OllamaAdapter
 from src.llm.structured import HealedLocator
-from .fuzzy_matcher import fuzzy_match, FUZZY_AUTO_ACCEPT, FUZZY_AI_FALLBACK
+from .fuzzy_matcher import fuzzy_match
 from .ai_healer import ai_heal
 
 _DEFAULT_LOCATOR_FILE = Path("locators/locators.json")

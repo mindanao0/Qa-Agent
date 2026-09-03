@@ -378,9 +378,11 @@ class SFGTraversalExplorer:
 
         while queue:
             if self._store.node_count() >= self.max_states:
-                logger.info("SFGTraversal: max_states reached"); break
+                logger.info("SFGTraversal: max_states reached")
+                break
             if (time.monotonic() - start) >= self.time_budget_s:
-                logger.info("SFGTraversal: time budget reached"); break
+                logger.info("SFGTraversal: time budget reached")
+                break
             node_id, path, depth = queue.popleft()
             if node_id in expanded or depth > self.max_depth:
                 continue

@@ -332,7 +332,6 @@ async def bft_generator_node(
     # Contract cache check (S4-E)
     contract_store = state.get("contract_skill_store")
     if contract_store is not None:
-        from src.contractskill.compiler import ContractSkill  # lazy import to avoid LanceDB startup cost
         skill = await contract_store.find_matching_skill(
             goal=state.get("requirement", ""),
             url=state.get("url", ""),

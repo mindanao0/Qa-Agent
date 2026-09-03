@@ -21,12 +21,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from loguru import logger
-from playwright.async_api import Browser, BrowserContext, Page, async_playwright
+from playwright.async_api import Browser, Page, async_playwright
 
 from src.contractskill.crawler import CrawlerConfig, SFGCrawler
 from src.contractskill.sfg import SFGStore
-from src.fuzzer.api_fuzzer import AutonomousAPIFuzzer
-from src.llm.instructor_client import InstructorClient
 from src.observability.audit_chain import CryptoAuditTrail
 from src.observability.tracer import OTelTracer
 from src.perception.grounder import Grounder
@@ -628,10 +626,10 @@ def _write_report(results: dict[str, Any]) -> pathlib.Path:
 
     lines = [
         "# SauceDemo QA Agent Report",
-        f"",
+        "",
         f"**Generated:** {now}  ",
-        f"**Target:** https://www.saucedemo.com/  ",
-        f"**Users tested:** standard_user, problem_user, locked_out_user  ",
+        "**Target:** https://www.saucedemo.com/  ",
+        "**Users tested:** standard_user, problem_user, locked_out_user  ",
         "",
         "## Summary",
         "",

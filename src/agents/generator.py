@@ -9,8 +9,7 @@ from loguru import logger
 from src.config_loader import get_structured_output_engine, get_use_grounder
 from src.llm.adapter import OllamaAdapter
 from src.llm.instructor_client import InstructorClient, StructuredGenerationError
-from src.llm.prompt_templates import GeneratorPromptTemplate
-from src.llm.structured import PlaywrightScript, TestPlan, enforce_json_output
+from src.llm.structured import PlaywrightScript, TestPlan
 from src.rag.retriever import HybridRetriever
 
 _MAX_RETRIES = 3

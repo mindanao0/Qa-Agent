@@ -23,7 +23,7 @@ from typing import TypeVar
 import instructor
 from loguru import logger
 from openai import AsyncOpenAI
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 # Reuse the module-level semaphore from adapter.py so InstructorClient and
 # OllamaAdapter never issue more than SEMAPHORE_LIMIT concurrent VRAM calls.

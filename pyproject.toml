@@ -99,7 +99,21 @@ dev = [
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-extend-exclude = ["scripts/legacy_windows", "tests/generated", "audit/phase0/work_tests"]
+extend-exclude = [
+    "scripts/legacy_windows",
+    "tests/generated",
+    # LLM-generated test output captured by measurement runs, not source
+    "audit/phase0/work_tests",
+    "audit/phase0/baseline_work",
+]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# Standalone measurement scripts, run directly from an arbitrary CWD. They must
+# put the project root on sys.path before `src.*` resolves, so their project
+# imports genuinely cannot sit at the top of the file.
+"audit/phase0/measure_sprint1_day2.py" = ["E402"]
+"audit/phase0/measure_sprint1_day2.5.py" = ["E402"]
+"audit/sprint2/heal_smoke.py" = ["E402"]
