@@ -272,3 +272,142 @@ async def test_run_e2e_returns_failed_result_on_hyp_failure():
     result = await runner._run_e2e(tc, page)
     assert result.passed is False
     assert result.failure_reason == "ไม่พบปุ่ม Login"
+
+
+# ─── Sprint 15 BrowserWorkerPool wiring (opt-in, default off) ───────────────
+
+
+def _runner_with_pool(use_worker_pool: bool, max_workers: int = 3) -> UniversalTestRunner:
+    runner = UniversalTestRunner.__new__(UniversalTestRunner)
+    runner._screenshot_dir = None
+    runner._terminal = MagicMock()
+    runner._use_worker_pool = use_worker_pool
+    runner._max_workers = max_workers
+    return runner
+
+
+class _FakeContext:
+    def __init__(self, browser, state: str = "seeded") -> None:
+        self.browser = browser
+        self._state = state
+
+    async def storage_state(self):
+        return {"cookies": [{"name": "session", "value": self._state}]}
+
+    async def new_page(self):
+        return _FakePage(self)
+
+    async def close(self):
+        pass
+
+
+class _FakePage:
+    def __init__(self, context) -> None:
+        self.context = context
+
+
+class _FakeBrowser:
+    def __init__(self) -> None:
+        self.new_contexts: list[tuple] = []
+
+    async def new_context(self, storage_state=None):
+        ctx = _FakeContext(self, state=str(storage_state))
+        self.new_contexts.append((ctx, storage_state))
+        return ctx
+
+
+class _NoBrowserContext:
+    browser = None
+
+
+class _NoBrowserPage:
+    context = _NoBrowserContext()
+
+
+@pytest.mark.asyncio
+async def test_run_uses_sequential_loop_when_flag_off():
+    """Default behaviour: run() must NOT touch BrowserWorkerPool when the
+    opt-in flag is off — this is the main regression risk of this wiring."""
+    runner = _runner_with_pool(use_worker_pool=False)
+    tc = _make_tc("functional")
+    dispatch_calls = []
+
+    async def fake_dispatch(t, page):
+        dispatch_calls.append((t, page))
+        return TestResult(test_case=t, passed=True, duration_ms=1)
+
+    runner._dispatch = fake_dispatch
+    with patch("src.universal_qa.test_runner.BrowserWorkerPool") as mock_pool_cls:
+        results = await runner.run([tc], AsyncMock())
+    mock_pool_cls.assert_not_called()
+    assert len(results) == 1
+    assert len(dispatch_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_run_parallel_dispatches_all_cases_in_original_order():
+    runner = _runner_with_pool(use_worker_pool=True, max_workers=3)
+    seen_pages = []
+
+    async def fake_dispatch(tc, page):
+        seen_pages.append(page)
+        passed = tc.title != "fail-me"
+        return TestResult(test_case=tc, passed=passed, duration_ms=1)
+
+    runner._dispatch = fake_dispatch
+
+    browser = _FakeBrowser()
+    main_page = _FakePage(_FakeContext(browser, state="authed"))
+    test_cases = [
+        _make_tc("functional") if i != 2 else
+        TestCase(title="fail-me", type="functional", priority="high",
+                  steps=["x"], expected_outcome="ok", source_url="https://x.com")
+        for i in range(6)
+    ]
+
+    results = await runner._run_parallel(test_cases, main_page)
+
+    assert len(results) == 6
+    # order preserved even though the pool returns worker-major order
+    assert [r.test_case.id for r in results] == [tc.id for tc in test_cases]
+    assert sum(r.passed for r in results) == 5
+    assert not results[2].passed
+    # genuine fan-out: more than one worker page was used
+    assert len({id(p) for p in seen_pages}) >= 2
+    # every worker context was seeded with the caller's authenticated session
+    assert browser.new_contexts
+    for _ctx, storage_state in browser.new_contexts:
+        assert storage_state == {"cookies": [{"name": "session", "value": "authed"}]}
+
+
+@pytest.mark.asyncio
+async def test_run_parallel_falls_back_to_sequential_without_browser():
+    """No reachable Browser handle on page.context -> falls back to the
+    existing sequential loop instead of raising."""
+    runner = _runner_with_pool(use_worker_pool=True)
+    dispatch_calls = []
+
+    async def fake_dispatch(tc, page):
+        dispatch_calls.append(tc.id)
+        return TestResult(test_case=tc, passed=True, duration_ms=1)
+
+    runner._dispatch = fake_dispatch
+    test_cases = [_make_tc("functional") for _ in range(3)]
+
+    results = await runner._run_parallel(test_cases, _NoBrowserPage())
+
+    assert len(results) == 3
+    assert len(dispatch_calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_run_dispatches_to_run_parallel_when_flag_on():
+    runner = _runner_with_pool(use_worker_pool=True)
+    tc = _make_tc("functional")
+    expected = [TestResult(test_case=tc, passed=True, duration_ms=1)]
+
+    with patch.object(runner, "_run_parallel", new=AsyncMock(return_value=expected)) as mock_rp:
+        results = await runner.run([tc], AsyncMock())
+
+    mock_rp.assert_called_once()
+    assert results == expected

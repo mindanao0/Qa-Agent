@@ -52,6 +52,23 @@ class FakeBrowser:
         return ctx
 
 
+class FakeBrowserRecordingStorageState:
+    """Like FakeBrowser but records every storage_state it was called with —
+    used to verify run_parallel's optional session-seeding."""
+
+    def __init__(self) -> None:
+        self.contexts: list[FakeContext] = []
+        self.storage_states_seen: list[object] = []
+        self._n = 0
+
+    async def new_context(self, storage_state=None) -> FakeContext:
+        self._n += 1
+        self.storage_states_seen.append(storage_state)
+        ctx = FakeContext(f"guid-{self._n}")
+        self.contexts.append(ctx)
+        return ctx
+
+
 def _tasks(n: int) -> list[TestHypothesis]:
     return [
         TestHypothesis(
@@ -229,3 +246,33 @@ async def test_generator_fn_is_serialized_by_llm_semaphore(tmp_path):
 async def test_llm_semaphore_value_is_one(tmp_path):
     pool = _pool(tmp_path)
     assert pool.llm_semaphore._value == 1
+
+
+# ── storage_state passthrough (session-seeding for authenticated fan-out) ──
+
+
+async def test_run_parallel_default_uses_zero_arg_new_context(tmp_path):
+    """Backward compat: no storage_state -> the plain browser.new_context()
+    call every existing caller/fake already relies on."""
+
+    async def runner(task, page, worker_id):
+        return True
+
+    pool = _pool(tmp_path, config=WorkerConfig(n_workers=2), task_runner=runner)
+    browser = FakeBrowser()  # zero-arg new_context() only
+    results = await pool.run_parallel(_tasks(4), browser)
+    assert len(results) == 4
+
+
+async def test_run_parallel_seeds_every_worker_with_storage_state(tmp_path):
+    async def runner(task, page, worker_id):
+        return True
+
+    pool = _pool(tmp_path, config=WorkerConfig(n_workers=3), task_runner=runner)
+    browser = FakeBrowserRecordingStorageState()
+    session = {"cookies": [{"name": "auth", "value": "1"}]}
+
+    await pool.run_parallel(_tasks(9), browser, storage_state=session)
+
+    assert len(browser.storage_states_seen) == 3
+    assert all(s == session for s in browser.storage_states_seen)
