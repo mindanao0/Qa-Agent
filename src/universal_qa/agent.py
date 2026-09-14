@@ -13,8 +13,10 @@ from src.cache.semantic_cache import SemanticCache
 from src.config_loader import (
     get_api_fuzz_config,
     get_parallel_config,
+    get_race_config,
     get_semantic_cache_config,
     get_use_api_fuzz,
+    get_use_race_testing,
     get_use_semantic_cache,
     get_use_worker_pool,
 )
@@ -47,6 +49,8 @@ class UniversalQAAgent:
         output_dir: pathlib.Path | None = None,
         enable_coverage_crosscheck: bool = False,
         enable_api_fuzz: bool = False,
+        enable_race_testing: bool | None = None,
+        allow_destructive_race_scenarios: bool | None = None,
     ) -> None:
         self._url = url
         self._max_pages = max_pages
@@ -57,6 +61,17 @@ class UniversalQAAgent:
         # flag turns the phase on — mirrors llm.structured_output_engine's
         # dual env/config gate. Default (both False) is zero behavior change.
         self._enable_api_fuzz = bool(enable_api_fuzz) or get_use_api_fuzz()
+        # None => defer to config/agent.yaml (race.*), same convention as the
+        # semantic cache; an explicit True/False (e.g. from the CLI) wins.
+        self._race_cfg = get_race_config()
+        self._enable_race_testing = (
+            get_use_race_testing() if enable_race_testing is None else enable_race_testing
+        )
+        self._allow_destructive_race_scenarios = (
+            bool(self._race_cfg.get("allow_destructive_scenarios", False))
+            if allow_destructive_race_scenarios is None
+            else allow_destructive_race_scenarios
+        )
         self._auth = AuthManager(username=username, password=password)
         self._discovery = SiteDiscovery(max_pages=max_pages)
         _semantic_cache: SemanticCache | None = None
@@ -130,6 +145,9 @@ class UniversalQAAgent:
 
                 if self._enable_api_fuzz:
                     await self._run_api_fuzz(discover_url)
+
+                if self._enable_race_testing:
+                    await self._run_race_testing(nav_map)
 
                 # Supplement nav_map with Phase 2 pages not reached by Phase 3
                 _explored_urls = {p.url.split("?")[0].split("#")[0] for p in nav_map.pages}
@@ -226,6 +244,40 @@ class UniversalQAAgent:
             f"  Coverage crosscheck: {report.get('seen_by_all_count', '?')}/"
             f"{report.get('total_distinct_paths', '?')} paths seen by every dimension "
             f"→ {out_path}"
+        )
+
+    async def _run_race_testing(self, nav_map: NavigationMap) -> None:
+        """Optional post-exploration stage: concurrent-GET race testing
+        (Sprint 10/12 RaceConditionSwarm) against distinct pages discovered
+        in Phase 3. Runs its own isolated browser session — never shares
+        `page` with the main flow — so a failure here never breaks the run.
+
+        SAFE BY DEFAULT: only read-only concurrent GET scenarios are ever
+        built, regardless of `allow_destructive_race_scenarios` — see
+        src/universal_qa/race_check.py for the full safety-scoping rationale.
+        """
+        from src.universal_qa.race_check import run_race_check
+
+        urls = [p.url for p in nav_map.pages] or [nav_map.base_url]
+        try:
+            report = await run_race_check(
+                urls,
+                headless=self._headless,
+                agents_per_scenario=int(self._race_cfg.get("agents_per_scenario", 2)),
+                overlap_ms=int(self._race_cfg.get("overlap_ms", 200)),
+                max_scenarios=int(self._race_cfg.get("max_scenarios", 5)),
+                allow_destructive=self._allow_destructive_race_scenarios,
+            )
+        except Exception as exc:
+            logger.warning(f"UniversalQAAgent: race testing failed — {exc!r}")
+            return
+
+        self._output_dir.mkdir(parents=True, exist_ok=True)
+        out_path = self._output_dir / "race_report.json"
+        out_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        logger.info(
+            f"  Race testing: {report.get('conflicts_found', '?')}/"
+            f"{report.get('scenarios_tested', '?')} scenarios showed a conflict → {out_path}"
         )
 
     async def _run_api_fuzz(self, seed_url: str) -> None:

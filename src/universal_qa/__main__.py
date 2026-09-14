@@ -34,6 +34,15 @@ def main() -> None:
                              "infer their schema and fuzz them (GET-only, rate-limited, "
                              "BLOCKED_ACTION_PATTERNS-enforced) and write "
                              "<output-dir>/api_fuzz_report.json (see src/fuzzer/, Sprint 13)")
+    parser.add_argument("--race-testing", action="store_true", default=None,
+                        help="After exploration, run concurrent read-only GET race scenarios "
+                             "against discovered pages and write <output-dir>/race_report.json "
+                             "(see src/universal_qa/race_check.py). Default: config/agent.yaml "
+                             "race.enable_race_testing (False).")
+    parser.add_argument("--allow-destructive-race-scenarios", action="store_true", default=None,
+                        help="Reserved: no safe generic destructive-scenario synthesis exists "
+                             "yet for arbitrary sites, so this currently has no effect beyond a "
+                             "log line — see src/universal_qa/race_check.py.")
     args = parser.parse_args()
 
     agent = UniversalQAAgent(
@@ -47,6 +56,8 @@ def main() -> None:
         headless=args.headless,
         enable_coverage_crosscheck=args.coverage_crosscheck,
         enable_api_fuzz=args.api_fuzz,
+        enable_race_testing=args.race_testing,
+        allow_destructive_race_scenarios=args.allow_destructive_race_scenarios,
     )
 
     results = asyncio.run(agent.run())

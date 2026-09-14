@@ -128,3 +128,20 @@ def get_api_fuzz_config() -> dict:
     """Return the fuzzer section from config/agent.yaml as a dict."""
     config = get_config()
     return config.get("fuzzer", {})
+
+
+def get_use_race_testing() -> bool:
+    """Return True if opt-in race-condition swarm testing (Sprint 10/12) is
+    enabled in config.
+
+    Defaults to False (opt-in) — see src/race/swarm.py and
+    src/universal_qa/race_check.py.
+    """
+    config = get_config()
+    return bool(config.get("race", {}).get("enable_race_testing", False))
+
+
+def get_race_config() -> dict:
+    """Return the race section from config/agent.yaml as a dict."""
+    config = get_config()
+    return config.get("race", {})
