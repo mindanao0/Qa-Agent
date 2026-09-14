@@ -638,49 +638,9 @@ __all__ = [
     "_ALLOWED_ACTIONS",
 ]
 
-
-if __name__ == "__main__":
-    import argparse
-    import asyncio
-    import json
-
-    parser = argparse.ArgumentParser(description="Run the ContinuousLoopController")
-    parser.add_argument("--url", required=True, help="Start URL to test")
-    parser.add_argument("--max-cycles", type=int, default=3, help="Maximum loop cycles")
-    parser.add_argument(
-        "--profile",
-        default="todomvc",
-        choices=["todomvc", "generic"],
-        help="Site profile: 'todomvc' uses hardcoded plans (default), "
-             "'generic' uses SFGCrawler discovery for any website",
-    )
-    args = parser.parse_args()
-
-    async def _main() -> None:
-        if args.profile == "generic":
-            from src.universal_qa.agent import UniversalQAAgent
-            agent = UniversalQAAgent(args.url, max_pages=50)
-            results = await agent.run()
-            print(json.dumps({
-                "profile": "generic",
-                "total": len(results),
-                "passed": sum(1 for r in results if r.passed),
-                "failed": sum(1 for r in results if not r.passed),
-                "pass_rate": round(sum(1 for r in results if r.passed) / len(results), 3) if results else 0.0,
-            }, indent=2))
-            return
-
-        controller = ContinuousLoopController(args.url, max_cycles=args.max_cycles)
-        state = await controller.run()
-        print(json.dumps({
-            "profile": "todomvc",
-            "run_id": state.get("run_id", ""),
-            "cycles_completed": state.get("cycle", 0),
-            "tests_generated": len(state.get("tests_generated", [])),
-            "tests_passed": len(state.get("tests_passed", [])),
-            "tests_failed": len(state.get("tests_failed", [])),
-            "stop_reason": state.get("stop_reason"),
-            "otel_spans_emitted": controller.otel_spans_emitted,
-        }, indent=2))
-
-    asyncio.run(_main())
+# Real, documented CLI entry point: ``python -m src.continuous --url <URL> ...``
+# (src/continuous/__main__.py). It supersedes the inline ad hoc ``python
+# src/continuous/loop_controller.py --url ...`` script this module used to carry —
+# that copy defaulted every run's checkpoint/SFG/audit db onto the committed,
+# frozen ``audit/sprint11/`` gate artifacts, which a real invocation must never
+# touch (see __main__.py's module docstring for the per-run artifact layout).

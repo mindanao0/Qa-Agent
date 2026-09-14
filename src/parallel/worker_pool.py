@@ -145,8 +145,17 @@ class BrowserWorkerPool:
         self,
         tasks: list[TestHypothesis],
         browser: Browser,
+        *,
+        storage_state: dict | str | None = None,
     ) -> list[WorkerResult]:
         """Distribute ``tasks`` across N isolated-context workers concurrently.
+
+        ``storage_state`` (optional) seeds every worker's fresh
+        ``BrowserContext`` with the given cookies/localStorage — e.g. the
+        caller's already-authenticated session via
+        ``await context.storage_state()`` — so parallel fan-out doesn't lose
+        an existing login. ``None`` (the default) is identical to today's
+        behaviour: a plain ``browser.new_context()`` per worker.
 
         Returns one :class:`WorkerResult` per task (order: worker-major).
         """
@@ -166,7 +175,7 @@ class BrowserWorkerPool:
 
         per_worker = await asyncio.gather(
             *[
-                self._run_worker(chunk, browser, f"worker-{i}")
+                self._run_worker(chunk, browser, f"worker-{i}", storage_state=storage_state)
                 for i, chunk in enumerate(chunks)
             ]
         )
@@ -177,8 +186,17 @@ class BrowserWorkerPool:
         tasks: list[TestHypothesis],
         browser: Browser,
         worker_id: str,
+        *,
+        storage_state: dict | str | None = None,
     ) -> list[WorkerResult]:
-        context: BrowserContext = await browser.new_context()
+        # Keep the zero-arg call for the common (no storage_state) case — real
+        # Playwright treats storage_state=None identically, but existing
+        # test fakes/mocks for browser.new_context() take no kwargs at all.
+        context: BrowserContext = (
+            await browser.new_context(storage_state=storage_state)
+            if storage_state is not None
+            else await browser.new_context()
+        )
         self.context_ids.append(self._context_guid(context))
         try:
             async with self._tracer.span(
