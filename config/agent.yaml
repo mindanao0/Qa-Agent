@@ -124,3 +124,11 @@ cache:
   db_path: "~/.qa-agent/semantic_cache.lance"
   hit_threshold: 0.95
   guided_threshold: 0.50
+
+fuzzer:
+  enable_api_fuzz: false   # opt-in — see src/fuzzer/ (Sprint 13 spec). Fuzzes REAL endpoints
+                           # observed on the target site: GET-only, rate-limited (<=2 req/sec)
+                           # with a circuit breaker, BLOCKED_ACTION_PATTERNS-enforced
+                           # (delete/remove/transfer/payment/password never fuzzed/synthesized)
+  max_endpoints: 5
+  max_vectors_per_field: 5

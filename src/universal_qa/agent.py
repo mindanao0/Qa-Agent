@@ -1,15 +1,21 @@
 # src/universal_qa/agent.py
 from __future__ import annotations
 
+import asyncio
 import json
 import pathlib
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from loguru import logger
 from playwright.async_api import async_playwright
 
 from src.cache.semantic_cache import SemanticCache
-from src.config_loader import get_semantic_cache_config, get_use_semantic_cache
+from src.config_loader import (
+    get_api_fuzz_config,
+    get_semantic_cache_config,
+    get_use_api_fuzz,
+    get_use_semantic_cache,
+)
 from src.universal_qa.auth_manager import AuthManager
 from src.universal_qa.explorer.nav_map import ExploredPage, NavigationMap
 from src.universal_qa.models import TestResult
@@ -38,12 +44,17 @@ class UniversalQAAgent:
         headless: bool = True,
         output_dir: pathlib.Path | None = None,
         enable_coverage_crosscheck: bool = False,
+        enable_api_fuzz: bool = False,
     ) -> None:
         self._url = url
         self._max_pages = max_pages
         self._headless = headless
         self._output_dir = output_dir or pathlib.Path("reports")
         self._enable_coverage_crosscheck = enable_coverage_crosscheck
+        # Config-file opt-in (get_use_api_fuzz) OR an explicit constructor/CLI
+        # flag turns the phase on — mirrors llm.structured_output_engine's
+        # dual env/config gate. Default (both False) is zero behavior change.
+        self._enable_api_fuzz = bool(enable_api_fuzz) or get_use_api_fuzz()
         self._auth = AuthManager(username=username, password=password)
         self._discovery = SiteDiscovery(max_pages=max_pages)
         _semantic_cache: SemanticCache | None = None
@@ -114,6 +125,9 @@ class UniversalQAAgent:
 
                 if self._enable_coverage_crosscheck:
                     await self._run_coverage_crosscheck(discover_url)
+
+                if self._enable_api_fuzz:
+                    await self._run_api_fuzz(discover_url)
 
                 # Supplement nav_map with Phase 2 pages not reached by Phase 3
                 _explored_urls = {p.url.split("?")[0].split("#")[0] for p in nav_map.pages}
@@ -207,6 +221,115 @@ class UniversalQAAgent:
             f"  Coverage crosscheck: {report.get('seen_by_all_count', '?')}/"
             f"{report.get('total_distinct_paths', '?')} paths seen by every dimension "
             f"→ {out_path}"
+        )
+
+    async def _run_api_fuzz(self, seed_url: str) -> None:
+        """Optional post-exploration stage: discover REST endpoints the site
+        actually calls, infer their schema from real captured traffic (Sprint 13
+        ``SchemaInferrer``), generate typed fuzz vectors (``AdvancedVectorGenerator``),
+        and send them against the REAL target to surface server-side anomalies —
+        5xx on malformed input, response-schema drift (``AnomalyClassifier``).
+        Runs its own isolated browser session — never shares `page`/`context`
+        with the main flow — so a failure here never breaks the run.
+
+        Deliberately conservative for a phase that fuzzes a real third-party
+        site: only GET endpoints that were actually observed on the wire are
+        fuzzed (no POST/PUT/DELETE is ever synthesized here), on top of the
+        fuzzer's own BLOCKED_ACTION_PATTERNS enforcement (delete/remove/
+        transfer/payment/password — never weakened) and its built-in
+        ≤2 req/sec spacing + consecutive-5xx circuit breaker. See
+        docs/specs/"Sprint 13 Advanced API Fuzzing.md" / src/fuzzer/.
+        """
+        from src.fuzzer.anomaly_classifier import AnomalyClassifier
+        from src.fuzzer.api_fuzzer import AutonomousAPIFuzzer, FuzzRequest
+        from src.fuzzer.schema_inferrer import SchemaInferrer
+        from src.fuzzer.vector_generator import AdvancedVectorGenerator, BLOCKED_ACTION_PATTERNS
+
+        cfg = get_api_fuzz_config()
+        max_endpoints = int(cfg.get("max_endpoints", 5))
+        max_vectors = int(cfg.get("max_vectors_per_field", 5))
+
+        report: dict = {
+            "seed_url": seed_url,
+            "endpoints_discovered": 0,
+            "endpoints_fuzzed": 0,
+            "vectors_sent": 0,
+            "anomalies_found": 0,
+            "anomaly_breakdown": {},
+            "results": [],
+        }
+        try:
+            sem = asyncio.Semaphore(1)
+            base = f"{urlparse(seed_url).scheme}://{urlparse(seed_url).netloc}"
+
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(headless=self._headless, args=_LAUNCH_ARGS)
+                try:
+                    ctx = await browser.new_context()
+                    page = await ctx.new_page()
+                    try:
+                        inferrer = SchemaInferrer()
+                        generator = AdvancedVectorGenerator()
+                        classifier = AnomalyClassifier()
+                        fuzzer = AutonomousAPIFuzzer()
+
+                        traces = await inferrer.capture(page, seed_url)
+                        schemas = await inferrer.infer(traces, sem)
+                        report["endpoints_discovered"] = len(schemas)
+
+                        for schema in schemas[:max_endpoints]:
+                            if schema.method != "GET":
+                                continue  # read-only scope: never mutate a real 3rd-party site
+                            if BLOCKED_ACTION_PATTERNS.search(schema.endpoint):
+                                continue
+
+                            field_vectors = await generator.generate_fields(schema, sem, max_vectors)
+                            if not field_vectors:
+                                continue  # nothing safely fuzzable without guessing params
+
+                            requests: list[FuzzRequest] = []
+                            for field, vectors in field_vectors.items():
+                                sep = "&" if "?" in schema.endpoint else "?"
+                                for v in vectors:
+                                    url = f"{base}{schema.endpoint}{sep}{field}={quote(v, safe='')}"
+                                    requests.append(FuzzRequest(vector=v, method="GET", url=url, body=None))
+                            if not requests:
+                                continue
+
+                            results = await fuzzer.fuzz_endpoint(
+                                f"GET {schema.endpoint}", requests, page, classifier,
+                                schema.response_schema or None,
+                            )
+                            report["endpoints_fuzzed"] += 1
+                            report["vectors_sent"] += len(requests)
+                            for r in results:
+                                if r.anomaly and not r.false_positive:
+                                    report["anomalies_found"] += 1
+                                    atype = r.anomaly_type.value if r.anomaly_type else "?"
+                                    report["anomaly_breakdown"][atype] = (
+                                        report["anomaly_breakdown"].get(atype, 0) + 1
+                                    )
+                                    report["results"].append({
+                                        "endpoint": r.endpoint,
+                                        "vector": r.vector,
+                                        "status_code": r.status_code,
+                                        "anomaly_type": atype,
+                                        "duration_ms": r.duration_ms,
+                                    })
+                    finally:
+                        await ctx.close()
+                finally:
+                    await browser.close()
+        except Exception as exc:
+            logger.warning(f"UniversalQAAgent: api fuzz phase failed — {exc!r}")
+            report["error"] = repr(exc)
+
+        self._output_dir.mkdir(parents=True, exist_ok=True)
+        out_path = self._output_dir / "api_fuzz_report.json"
+        out_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        logger.info(
+            f"  API fuzz: {report['endpoints_fuzzed']}/{report['endpoints_discovered']} GET "
+            f"endpoints fuzzed, {report['anomalies_found']} anomalies → {out_path}"
         )
 
 
