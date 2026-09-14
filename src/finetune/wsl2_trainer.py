@@ -647,6 +647,120 @@ def load_model_for_training_cpu_offload(
 # ═════════════════════════════════════════════════════════════════════════════
 
 
+def restore_lora_adapter(model: Any, ckpt_dir: Path) -> int:
+    """Load a checkpoint's LoRA weights into *model* WITHOUT re-dispatching it.
+
+    Why this exists: transformers' Trainer._load_from_checkpoint() resumes a PeftModel by
+    calling PeftModel.load_adapter(), which re-runs accelerate's dispatch_model() whenever
+    hf_device_map contains "cpu"/"disk" — and it passes no offload dir. Our CPU-offload map
+    keeps the offloaded base weights (embed_tokens, lm_head, the non-GPU decoder layers) on
+    the meta device, so the re-dispatch has no value to place and dies with:
+        ValueError: weight is on the meta device, we need a `value` to put in on 0.
+    Both 2026-07-14 headless runs died there, 2 s in, on --resume auto.
+
+    A resume only needs the LoRA weights out of the model checkpoint, and those live purely
+    on the GPU-resident layers (layers_to_transform) — so load them straight into the adapter
+    and never touch the dispatch. Optimizer / scheduler / scaler / RNG / step count are still
+    restored by the stock Trainer code paths.
+
+    Fail-closed: an adapter that does not fully land would train from scratch while *looking*
+    like a resume, so a partial or no-op load raises instead of burning 27 h.
+
+    Returns the number of tensors restored.
+    """
+    import torch
+    from peft import set_peft_model_state_dict  # type: ignore[import-not-found]
+
+    safetensors_file = ckpt_dir / "adapter_model.safetensors"
+    bin_file = ckpt_dir / "adapter_model.bin"
+    if safetensors_file.exists():
+        from safetensors.torch import load_file  # type: ignore[import-not-found]
+        adapter_sd = load_file(str(safetensors_file))
+    elif bin_file.exists():
+        adapter_sd = torch.load(str(bin_file), map_location="cpu", weights_only=True)
+    else:
+        raise FileNotFoundError(
+            f"Resume from {ckpt_dir}: no adapter_model.safetensors / adapter_model.bin"
+        )
+    if not adapter_sd:
+        raise ValueError(f"Resume from {ckpt_dir}: adapter checkpoint is empty")
+
+    active = getattr(model, "active_adapters", None)
+    adapter_name = active[0] if active else getattr(model, "active_adapter", "default")
+
+    result = set_peft_model_state_dict(model, adapter_sd, adapter_name=adapter_name)
+    # NOTE: missing_keys is meaningless here — it lists every frozen base weight, because
+    # the adapter state dict only carries LoRA tensors. unexpected_keys is the real signal:
+    # it means a checkpoint tensor matched no parameter in the model we just built.
+    unexpected = list(getattr(result, "unexpected_keys", []) or [])
+    if unexpected:
+        raise RuntimeError(
+            f"Resume from {ckpt_dir}: {len(unexpected)} adapter tensor(s) matched no parameter "
+            f"in the model (first: {unexpected[:3]}). The checkpoint was built with a different "
+            f"LoRA config — r / lora_alpha / target_modules / layers_to_transform (which follows "
+            f"--gpu-budget-gib). Refusing to train on a half-restored adapter."
+        )
+
+    # lora_B is zero-initialised when the adapter is built, so a restored adapter cannot be
+    # all-zero. This is the guard against a silent no-op load (right keys, nothing copied).
+    b_norm = 0.0
+    for name, param in model.named_parameters():
+        if "lora_B" in name and param.device.type != "meta":
+            b_norm += float(param.detach().float().norm())
+    if b_norm == 0.0:
+        raise RuntimeError(
+            f"Resume from {ckpt_dir}: every lora_B weight is still zero after the load — the "
+            f"adapter did NOT restore, and this run would silently train from scratch."
+        )
+
+    logger.info(
+        f"[resume] restored {len(adapter_sd)} LoRA tensors from {ckpt_dir} "
+        f"(adapter='{adapter_name}', ||lora_B||={b_norm:.4f}) — no dispatch_model, "
+        f"offloaded base weights left on meta"
+    )
+    return len(adapter_sd)
+
+
+def resync_lr_after_resume(optimizer: Any, lr_scheduler: Any) -> list[float] | None:
+    """Re-point the restored optimizer LRs at the CURRENT schedule horizon.
+
+    LambdaLR.load_state_dict() restores last_epoch / _step_count / base_lrs / _last_lr but NOT
+    the lambdas — a functools.partial's __dict__ is empty, so the freshly built partial (with
+    num_training_steps=max_steps) survives the load. Verified 2026-07-14 against the real
+    scheduler.pt: the horizon does come back as 300.
+
+    The optimizer, however, carries its own per-group 'lr' inside optimizer.pt, and HF applies
+    THAT to the first post-resume update — it only calls lr_scheduler.step() *after* the step
+    (and logs the pre-update LR, which is why checkpoint-20's own log shows 4.89e-06 at step 20
+    while its scheduler.pt holds _last_lr=0.0).
+
+    Resuming checkpoint-20 — a max_steps=20 run whose cosine had decayed to exactly 0.0 — into a
+    300-step run therefore burns step 21 on a no-op update at lr=0.0 and logs "learning_rate:
+    0.0", which is indistinguishable from a dead scheduler. Recomputing the LR from the fresh
+    lambdas at last_epoch fixes both: step 21 runs at 1.994e-04 — the LR an uninterrupted
+    300-step run would use there.
+
+    Same-horizon resumes recompute the value they just restored → no-op. Returns the new LRs.
+    """
+    sched = getattr(lr_scheduler, "scheduler", lr_scheduler)  # unwrap accelerate's wrapper
+    lambdas = getattr(sched, "lr_lambdas", None)
+    base_lrs = getattr(sched, "base_lrs", None)
+    if not lambdas or not base_lrs:
+        return None  # not a LambdaLR (ReduceLROnPlateau &c.) — nothing to re-sync
+    fresh = [base * fn(sched.last_epoch) for fn, base in zip(lambdas, base_lrs)]
+    stale = [group["lr"] for group in optimizer.param_groups]
+    for group, lr in zip(optimizer.param_groups, fresh):
+        group["lr"] = lr
+    sched._last_lr = list(fresh)
+    if any(abs(a - b) > 1e-12 for a, b in zip(stale, fresh)):
+        logger.info(
+            f"[resume] LR re-synced to the current schedule at step {sched.last_epoch}: "
+            f"{stale[0]:.3e} (from optimizer.pt) → {fresh[0]:.3e}. The checkpoint's schedule "
+            f"ended on a different horizon, so its LR was stale."
+        )
+    return fresh
+
+
 def train(
     dataset_path: Path,
     output_dir: Path,
@@ -811,7 +925,26 @@ def train(
         disable_tqdm=cpu_offload,
     )
 
-    trainer = Trainer(
+    class _OffloadSafeTrainer(Trainer):
+        """Trainer whose PEFT resume never re-dispatches a CPU-offloaded model.
+
+        Only the offloaded path needs this (see restore_lora_adapter); a fully GPU-resident
+        model — the unsloth path, hf_device_map={"": 0} — keeps the stock loader.
+        """
+
+        def _load_from_checkpoint(self, resume_from_checkpoint, model=None):
+            target = model if model is not None else self.model
+            device_map = getattr(target, "hf_device_map", None) or {}
+            if not any(d in ("cpu", "disk") for d in device_map.values()):
+                return super()._load_from_checkpoint(resume_from_checkpoint, model)
+            restore_lora_adapter(target, Path(resume_from_checkpoint))
+
+        def _load_optimizer_and_scheduler(self, checkpoint):
+            super()._load_optimizer_and_scheduler(checkpoint)
+            if checkpoint is not None:
+                resync_lr_after_resume(self.optimizer, self.lr_scheduler)
+
+    trainer = _OffloadSafeTrainer(
         model=model,
         args=training_args,
         train_dataset=tokenized,
