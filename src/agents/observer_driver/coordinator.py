@@ -33,6 +33,7 @@ from src.agents.observer_driver.driver_agent import (
     execute_action,
     plan_action,
 )
+from src.agents.observer_driver.feedback import distill_feedback
 from src.agents.observer_driver.observers import (
     AccessibilityObserver,
     PerformanceObserver,
@@ -88,6 +89,7 @@ async def step_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]
             s.url,
             ollama_url=ollama_url,
             model=model,
+            hint=s.pending_hint,
         )
         payload = await execute_action(page, action, bus)
     except Exception as exc:  # noqa: BLE001
@@ -115,10 +117,20 @@ async def step_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]
             continue
         all_reports.extend(result)
 
+    # Distil THIS step's reports (not the accumulated history) into a hint the Driver
+    # reads on the NEXT step. Deterministic; ``acted_finding_hashes`` suppresses
+    # re-nagging. A None result CLEARS any stale hint on the last-value channel.
+    hint = distill_feedback(
+        all_reports, step_idx, frozenset(s.acted_finding_hashes)
+    )
+
     update: dict[str, Any] = {
         "current_step": step_idx + 1,
         "observer_reports": all_reports,
+        "pending_hint": hint,
     }
+    if hint is not None:
+        update["acted_finding_hashes"] = hint.finding_hashes
     if action is not None:
         update["driver_actions"] = [action]
         update["trace_events"] = [payload]
