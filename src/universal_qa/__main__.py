@@ -29,6 +29,11 @@ def main() -> None:
                         help="After exploration, cross-check the SFG crawl against 8 "
                              "independent coverage dimensions and write "
                              "<output-dir>/coverage_crosscheck.json (see eval/FINDINGS_explore.md)")
+    parser.add_argument("--api-fuzz", action="store_true", default=False,
+                        help="After exploration, discover REST endpoints the site calls, "
+                             "infer their schema and fuzz them (GET-only, rate-limited, "
+                             "BLOCKED_ACTION_PATTERNS-enforced) and write "
+                             "<output-dir>/api_fuzz_report.json (see src/fuzzer/, Sprint 13)")
     parser.add_argument("--race-testing", action="store_true", default=None,
                         help="After exploration, run concurrent read-only GET race scenarios "
                              "against discovered pages and write <output-dir>/race_report.json "
@@ -50,6 +55,7 @@ def main() -> None:
         allow_destructive=args.allow_destructive,
         headless=args.headless,
         enable_coverage_crosscheck=args.coverage_crosscheck,
+        enable_api_fuzz=args.api_fuzz,
         enable_race_testing=args.race_testing,
         allow_destructive_race_scenarios=args.allow_destructive_race_scenarios,
     )

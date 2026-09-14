@@ -113,6 +113,23 @@ def get_parallel_config() -> dict:
     return config.get("parallel", {})
 
 
+def get_use_api_fuzz() -> bool:
+    """Return True if the opt-in API fuzzing phase (Sprint 13) is enabled in config.
+
+    Defaults to False (opt-in) — see src/fuzzer/. This is a config-file gate only;
+    UniversalQAAgent also accepts an explicit ``enable_api_fuzz`` constructor arg
+    (wired to the ``--api-fuzz`` CLI flag) and enables the phase if either is True.
+    """
+    config = get_config()
+    return bool(config.get("fuzzer", {}).get("enable_api_fuzz", False))
+
+
+def get_api_fuzz_config() -> dict:
+    """Return the fuzzer section from config/agent.yaml as a dict."""
+    config = get_config()
+    return config.get("fuzzer", {})
+
+
 def get_use_race_testing() -> bool:
     """Return True if opt-in race-condition swarm testing (Sprint 10/12) is
     enabled in config.
