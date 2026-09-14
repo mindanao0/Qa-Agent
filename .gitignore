@@ -41,6 +41,7 @@ data/training/*.jsonl.bak
 # Claude Code local state — per-user/per-session, churns every run
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+.claude/worktrees/
 
 # Misc
 package-lock.json
