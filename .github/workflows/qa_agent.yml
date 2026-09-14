@@ -81,12 +81,37 @@ jobs:
         run: uv pip install -e "." --system
 
       - name: Run unit tests
-        run: uv run pytest tests/unit/ tests/observability/ -v --tb=short --timeout=60
+        # Covers every suite that runs without live Ollama, a browser, or a
+        # training dataset. Was tests/unit + tests/observability only (25 of the
+        # repo's 628 collected tests, ~4%); this raises the gate to ~403.
+        #
+        # Not included, deliberately:
+        #   tests/*.py (root)  — need live Ollama / Chromium; test-e2e covers them
+        #   tests/finetune     — hard-require data/training/train.jsonl, gitignored
+        #   ci/tests           — outside pytest testpaths, needs ci/conftest_ci.py
+        # The two deselected cases spawn nested `uv run pytest` subprocesses,
+        # which re-resolve the whole project (incl. the CUDA torch wheel) inside
+        # the job; test-e2e is the right place for them.
+        run: |
+          uv run pytest \
+            tests/unit tests/observability tests/codetest tests/continuous \
+            tests/explorer tests/fuzzer tests/parallel tests/pbt tests/race \
+            tests/universal_qa \
+            --deselect tests/codetest/test_executor.py::test_executor_passes_simple_test \
+            --deselect tests/pbt/test_hypothesis_runner.py::test_run_finds_real_counterexample_and_passes_holding \
+            -v --tb=short --timeout=120
 
   test-e2e:
     name: test-e2e
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Sprint 6's live gate serializes ~17 generate+judge LLM calls through a
+    # Semaphore(1) on CPU-only Ollama (no GPU on ubuntu-latest). Each call is
+    # now bounded (~30-80s observed, generation length capped — see the
+    # instructor_client.py max_tokens fix) but the total still doesn't fit in
+    # 20 min: 17 funcs x up to 2 calls each x ~80s worst-case is ~45 min with
+    # margin. Was 20 before this bump; that value came from before Sprint 6/7
+    # existed and was never revisited.
+    timeout-minutes: 45
     services:
       ollama:
         image: ollama/ollama:latest

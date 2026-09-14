@@ -21,7 +21,7 @@ from typing import Any, Awaitable, Callable, Literal
 import lancedb
 import pyarrow as pa
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from src.contractskill.sfg import SFGEdge, SFGNode, SFGStore
 from src.llm.instructor_client import InstructorClient

@@ -80,3 +80,68 @@ def get_exploration_config() -> dict:
     """Return the exploration section from config/agent.yaml as a dict."""
     config = get_config()
     return config.get("exploration", {})
+
+
+def get_use_semantic_cache() -> bool:
+    """Return True if the semantic cache (Priority 3) is enabled in config.
+
+    Defaults to False (opt-in) — see src/cache/semantic_cache.py.
+    """
+    config = get_config()
+    return bool(config.get("cache", {}).get("use_semantic_cache", False))
+
+
+def get_semantic_cache_config() -> dict:
+    """Return the cache section from config/agent.yaml as a dict."""
+    config = get_config()
+    return config.get("cache", {})
+
+
+def get_use_worker_pool() -> bool:
+    """Return True if the BrowserWorkerPool (Sprint 15) parallel executor is
+    enabled in config.
+
+    Defaults to False (opt-in) — see src/parallel/worker_pool.py.
+    """
+    config = get_config()
+    return bool(config.get("parallel", {}).get("use_worker_pool", False))
+
+
+def get_parallel_config() -> dict:
+    """Return the parallel section from config/agent.yaml as a dict."""
+    config = get_config()
+    return config.get("parallel", {})
+
+
+def get_use_api_fuzz() -> bool:
+    """Return True if the opt-in API fuzzing phase (Sprint 13) is enabled in config.
+
+    Defaults to False (opt-in) — see src/fuzzer/. This is a config-file gate only;
+    UniversalQAAgent also accepts an explicit ``enable_api_fuzz`` constructor arg
+    (wired to the ``--api-fuzz`` CLI flag) and enables the phase if either is True.
+    """
+    config = get_config()
+    return bool(config.get("fuzzer", {}).get("enable_api_fuzz", False))
+
+
+def get_api_fuzz_config() -> dict:
+    """Return the fuzzer section from config/agent.yaml as a dict."""
+    config = get_config()
+    return config.get("fuzzer", {})
+
+
+def get_use_race_testing() -> bool:
+    """Return True if opt-in race-condition swarm testing (Sprint 10/12) is
+    enabled in config.
+
+    Defaults to False (opt-in) — see src/race/swarm.py and
+    src/universal_qa/race_check.py.
+    """
+    config = get_config()
+    return bool(config.get("race", {}).get("enable_race_testing", False))
+
+
+def get_race_config() -> dict:
+    """Return the race section from config/agent.yaml as a dict."""
+    config = get_config()
+    return config.get("race", {})

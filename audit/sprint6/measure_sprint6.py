@@ -259,7 +259,6 @@ async def rerun_failed(verbose: bool = False) -> dict:
         return data
 
     failed_details = [d for d in test_details if not d["passed"]]
-    passed_count_before = sum(1 for d in test_details if d["passed"])
     total_count = len(test_details)
 
     if not failed_details:

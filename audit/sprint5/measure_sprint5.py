@@ -23,7 +23,6 @@ import tempfile
 from loguru import logger
 from playwright.async_api import async_playwright
 
-from src.config_loader import get_exploration_config
 from src.contractskill.compiler import ContractSkill, ContractSkillStore, ContractStep
 from src.contractskill.crawler import CrawlerConfig, SFGCrawler
 from src.contractskill.sfg import SFGStore

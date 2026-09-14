@@ -630,7 +630,7 @@ def _build_replay_script(
     if action_type == "fill":
         if name:
             return f'page.get_by_label("{name}").fill("value")'
-        return f'page.get_by_role("textbox").fill("value")'
+        return 'page.get_by_role("textbox").fill("value")'
 
     if action_type == "select":
         if name:

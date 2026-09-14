@@ -28,6 +28,21 @@ All specifications are in docs/specs/
 ## Active Task
 Branch form-filling-crawler — form-filling crawler + 14-site eval loop + 7B fine-tune pipeline.
 
+2026-09-14 coverage-dimensions promoted from eval/ into production:
+- The 9 coverage-cross-check dimensions built on this branch (static-declared, sfg_crawl,
+  js_css_coverage, viewport A/B, session-state A/B, keyboard-walk, monkey-walk, declared API
+  surface — see eval/FINDINGS_explore.md) were measurement-only, living under eval/ and never
+  reachable from the real agent. Moved to `src/universal_qa/coverage/` (dimensions.py + 7
+  dim_*.py + new crosscheck.py); eval/run_coverage_crosscheck.py is now a thin CLI wrapper
+  (`--full` runs all 9, default keeps the original 3 for backward compat with existing
+  eval/coverage_*.json reports). tests/explorer/test_coverage_dimensions.py re-pointed at the
+  new import path — 22/22 pass unchanged.
+- Wired as a genuinely optional production stage: `UniversalQAAgent(enable_coverage_crosscheck=
+  True)` / CLI `--coverage-crosscheck` runs all 9 dimensions in isolated browser session(s)
+  after Phase 3 exploration and writes `<output-dir>/coverage_crosscheck.json`. Default is
+  False — zero behavior change for existing runs (incl. the 14-site A/B eval), no LLM calls, no
+  training-data collection, so this does NOT touch the DATASET FREEZE below.
+
 2026-07-12 finetune-pipeline overhaul (evidence-first diagnosis of the 2026-06-27 "hang"):
 - ROOT CAUSE (journal-proven): systemd expands ${VAR} inside `systemd-run bash -c "<inline>"`
   ("Referenced but unset environment variable ... FREE, READY") → the old headless VRAM gate was

@@ -48,7 +48,7 @@ class CryptoAuditTrail:
     def _read_last_link_hash(self) -> str:
         if not self._path.exists():
             return "GENESIS"
-        lines = [l for l in self._path.read_text().splitlines() if l.strip()]
+        lines = [ln for ln in self._path.read_text().splitlines() if ln.strip()]
         if not lines:
             return "GENESIS"
         last = json.loads(lines[-1])
@@ -83,7 +83,7 @@ class CryptoAuditTrail:
     def verify(self) -> bool:
         if not self._path.exists():
             return True
-        lines = [l for l in self._path.read_text().splitlines() if l.strip()]
+        lines = [ln for ln in self._path.read_text().splitlines() if ln.strip()]
         for i, line in enumerate(lines):
             e = json.loads(line)
             # Recompute expected prev_hash:

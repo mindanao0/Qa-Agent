@@ -5,6 +5,8 @@ from typing import Literal
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.cache.cached_structured import cached_create_structured
+from src.cache.semantic_cache import SemanticCache
 from src.contractskill.sfg import SFGNode, SFGStore
 from src.llm.instructor_client import InstructorClient, StructuredGenerationError
 from src.universal_qa.models import TestCase
@@ -39,8 +41,24 @@ class UniversalTestPlanner:
     Security: template XSS + SQLi per form-node.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, cache: SemanticCache | None = None) -> None:
         self._client = InstructorClient()
+        # Opt-in semantic cache (config: cache.use_semantic_cache) — an
+        # uninitialized instance is fine, .initialize() runs lazily on first use.
+        self._cache = cache
+        self._cache_ready = False
+
+    async def _create_structured(self, prompt: str) -> _FuncResponse:
+        """create_structured(prompt, _FuncResponse), routed through the
+        semantic cache when one is configured (getattr-guarded: unit tests
+        construct this class via __new__() and never set self._cache)."""
+        cache = getattr(self, "_cache", None)
+        if cache is None:
+            return await self._client.create_structured(prompt, _FuncResponse, temperature=0.1)
+        if not self._cache_ready:
+            await cache.initialize()
+            self._cache_ready = True
+        return await cached_create_structured(self._client, cache, prompt, _FuncResponse, temperature=0.1)
 
     async def plan(self, sfg_store: SFGStore, start_url: str) -> list[TestCase]:
         nodes = sfg_store.get_nodes_by_url_prefix(start_url)
@@ -82,9 +100,7 @@ class UniversalTestPlanner:
                 f"expected_outcome (ผลลัพธ์ที่คาดหวัง ภาษาไทย)"
             )
             try:
-                response: _FuncResponse = await self._client.create_structured(
-                    prompt, _FuncResponse, temperature=0.1
-                )
+                response: _FuncResponse = await self._create_structured(prompt)
                 for item in response.test_cases:
                     results.append(TestCase(
                         title=item.title,
@@ -397,9 +413,7 @@ class UniversalTestPlanner:
                 f"expected_outcome (ผลลัพธ์ที่คาดหวัง ภาษาไทย)"
             )
             try:
-                response: _FuncResponse = await self._client.create_structured(
-                    prompt, _FuncResponse, temperature=0.1
-                )
+                response: _FuncResponse = await self._create_structured(prompt)
                 for item in response.test_cases:
                     results.append(TestCase(
                         title=item.title,
@@ -474,9 +488,7 @@ class UniversalTestPlanner:
                 f"expected_outcome (ผลลัพธ์ที่คาดหวัง ภาษาไทย)"
             )
             try:
-                response = await self._client.create_structured(
-                    prompt, _FuncResponse, temperature=0.1
-                )
+                response = await self._create_structured(prompt)
                 for item in response.test_cases:
                     results.append(TestCase(
                         title=item.title,
@@ -538,9 +550,7 @@ class UniversalTestPlanner:
                 f"title, priority, preconditions, steps, expected_outcome"
             )
             try:
-                response = await self._client.create_structured(
-                    prompt, _FuncResponse, temperature=0.1
-                )
+                response = await self._create_structured(prompt)
                 for item in response.test_cases:
                     results.append(TestCase(
                         title=item.title,
@@ -583,7 +593,7 @@ class UniversalTestPlanner:
                             f"เปิดหน้า {page.url}",
                             f"กรอก {kind} payload ลงทุกช่องรับข้อมูล: {payload}",
                             "กด submit form",
-                            f"ตรวจสอบว่า payload ไม่ทำงาน",
+                            "ตรวจสอบว่า payload ไม่ทำงาน",
                         ],
                         expected_outcome=f"หน้าเว็บไม่ได้รับผลกระทบจาก {kind} payload",
                         source_url=page.url,

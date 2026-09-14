@@ -35,12 +35,18 @@ reports/screenshots/
 reports/multi_site/_*.txt
 reports/multi_site/detail/
 
+# Continuous mode (python -m src.continuous) — per-run checkpoint db / SFG store /
+# episodic memory / crypto audit trail, one directory per --run-id; never commit
+# (contrast with the frozen, committed audit/sprint11/ gate proof)
+reports/continuous/
+
 # Dedupe backup of the training set
 data/training/*.jsonl.bak
 
 # Claude Code local state — per-user/per-session, churns every run
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+.claude/worktrees/
 
 # Misc
 package-lock.json

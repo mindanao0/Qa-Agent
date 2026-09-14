@@ -3,9 +3,7 @@ from __future__ import annotations
 import re
 
 from loguru import logger
-from playwright.async_api import Page
 
-from src.browser.ax_extractor import extract_axtree, prune_axtree
 from src.browser.manager import BrowserManager
 from src.healing.engine import HealingEngine
 from src.llm.adapter import OllamaAdapter
@@ -20,8 +18,6 @@ _LOCATOR_ERROR_PATTERNS: list[re.Pattern[str]] = [
     # Fallback: any get_by_xxx() pattern in the traceback
     re.compile(r"(?P<loc>page\.get_by_\w+\([^)]+\))"),
 ]
-
-_MAX_AXTREE_NODES = 200
 
 
 class CodeHealerAgent:
@@ -141,9 +137,6 @@ class CodeHealerAgent:
                     logger.warning(
                         f"CodeHealerAgent: navigation to {url!r} failed: {nav_exc}"
                     )
-
-                raw = await extract_axtree(page)
-                axtree = await prune_axtree(raw, max_nodes=_MAX_AXTREE_NODES)
 
                 return await self.healing_engine.heal(
                     page=page,

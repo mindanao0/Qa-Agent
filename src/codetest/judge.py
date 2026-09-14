@@ -14,7 +14,13 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict
 
 from src.codetest.generator import GeneratedTest
-from src.llm.instructor_client import InstructorClient, StructuredGenerationError
+from src.llm.instructor_client import InstructorClient
+
+# A MetamorphicCheckResult is one bool + a short reason string — never needs
+# more than a couple hundred tokens. Capped for the same reason as
+# generator.py's _MAX_TEST_TOKENS: an uncapped call can run unbounded on a
+# CPU-only runner if no natural stop token is emitted.
+_MAX_JUDGE_TOKENS = 256
 
 
 class MetamorphicCheckResult(BaseModel):
@@ -96,6 +102,7 @@ class CodeJudge:
                 prompt=prompt,
                 response_model=MetamorphicCheckResult,
                 temperature=0.0,
+                max_tokens=_MAX_JUDGE_TOKENS,
             )
         except Exception as exc:
             logger.warning(f"CodeJudge._check_metamorphic: error ({type(exc).__name__}): {exc!r}; failing open")

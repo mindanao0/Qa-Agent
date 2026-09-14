@@ -112,7 +112,9 @@ class SiteExplorer:
         self._crawler: SFGCrawler | None = None
 
     async def explore(self, page: Page, discovered_urls: list[str]) -> NavigationMap:
-        import tempfile, pathlib, shutil
+        import tempfile
+        import pathlib
+        import shutil
         tmp_dir = pathlib.Path(tempfile.mkdtemp(prefix="uqa_explore_"))
         sfg_path = tmp_dir / "sfg.db"
         self._sfg_store = SFGStore(db_path=sfg_path)

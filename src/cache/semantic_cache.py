@@ -26,7 +26,7 @@ from typing import Any, Literal, Optional
 
 import lancedb
 from lancedb.pydantic import LanceModel, Vector
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)

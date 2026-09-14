@@ -479,6 +479,41 @@ uv run python main.py `
 
 ---
 
+### 🟣 Continuous Mode — Explore/Generate/Execute/Heal แบบวนหลายรอบ
+
+> เป็นคนละ entry point จาก `main.py --mode ...` (เหมือน Universal QA Agent) — เรียกผ่าน
+> `python -m src.continuous` โดยตรง เพราะเป็น orchestration mode คู่ขนาน (multi-cycle
+> loop ที่คง browser context เดิมข้ามรอบ + LangGraph checkpoint) ไม่ใช่ phase หนึ่งของ
+> pipeline เดิม
+
+วนลูป N รอบของ crawl (state ใหม่) → สร้าง web+code test → execute → self-heal →
+checkpoint (LangGraph `AsyncSqliteSaver`, resume ได้ด้วย `--run-id` เดิม) จนกว่าจะถึง
+`--max-cycles`, coverage plateau, หรือ memory limit (`StopConditionEvaluator`)
+
+```bash
+# TodoMVC-shaped app (profile เริ่มต้น — action plan เขียนเฉพาะ TodoMVC DOM)
+uv run python -m src.continuous --url https://demo.playwright.dev/todomvc/#/ --max-cycles 5
+
+# เว็บไซต์อื่น ๆ ที่ไม่ใช่ TodoMVC — ใช้ profile generic (delegate ไปที่ UniversalQAAgent
+# หนึ่งรอบเดียว ไม่ใช่ loop จริง ๆ — ดู caveat ใน `python -m src.continuous --help`)
+uv run python -m src.continuous --url https://your-app.com --profile generic --max-pages 30
+```
+
+**Parameters:**
+
+| Parameter | คำอธิบาย | ค่า default |
+|-----------|-----------|------------|
+| `--url` | Target URL (จำเป็น) | — |
+| `--profile` | `todomvc` (loop จริง, TodoMVC-shaped) หรือ `generic` (single-pass ทุกเว็บ) | `todomvc` |
+| `--max-cycles` | จำนวนรอบสูงสุด, `0` = ไม่จำกัด | `10` |
+| `--run-id` | id ของ run / checkpoint thread — ใส่ id เดิมซ้ำเพื่อ resume | สุ่มใหม่ |
+| `--output-dir` | โฟลเดอร์เก็บ checkpoint/SFG/audit/episodic ของ run นี้ | `reports/continuous/<run-id>/` |
+
+ผลลัพธ์แต่ละ run แยกต่อ `--run-id` ใต้ `reports/continuous/` (ไม่ commit เข้า git —
+คนละที่กับ `audit/sprint11/` ซึ่งเป็น artifact ของ gate ที่ปิดแล้วและต้องไม่ถูกเขียนทับ)
+
+---
+
 ## ดู Allure Report
 
 ต้องติดตั้ง Allure CLI ก่อน: [allurereport.org/docs/install](https://allurereport.org/docs/install/)
