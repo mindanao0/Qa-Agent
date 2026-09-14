@@ -13,7 +13,7 @@ from xml.etree import ElementTree as ET
 
 import httpx
 
-from eval.coverage_dimensions import DimensionResult
+from src.universal_qa.coverage.dimensions import DimensionResult
 
 # React/Vue Router `path: "/x"` or JSX `<Route path="/x">`; Angular
 # `loadChildren: () => import(...).then(m => m.X) ` lazy routes carry a

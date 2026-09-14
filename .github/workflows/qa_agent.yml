@@ -104,7 +104,14 @@ jobs:
   test-e2e:
     name: test-e2e
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Sprint 6's live gate serializes ~17 generate+judge LLM calls through a
+    # Semaphore(1) on CPU-only Ollama (no GPU on ubuntu-latest). Each call is
+    # now bounded (~30-80s observed, generation length capped — see the
+    # instructor_client.py max_tokens fix) but the total still doesn't fit in
+    # 20 min: 17 funcs x up to 2 calls each x ~80s worst-case is ~45 min with
+    # margin. Was 20 before this bump; that value came from before Sprint 6/7
+    # existed and was never revisited.
+    timeout-minutes: 45
     services:
       ollama:
         image: ollama/ollama:latest

@@ -25,6 +25,10 @@ def main() -> None:
                         help="Show browser window")
     parser.add_argument("--detail-output", default=None,
                         help="Write full per-test results JSON (for training-data collection)")
+    parser.add_argument("--coverage-crosscheck", action="store_true", default=False,
+                        help="After exploration, cross-check the SFG crawl against 8 "
+                             "independent coverage dimensions and write "
+                             "<output-dir>/coverage_crosscheck.json (see eval/FINDINGS_explore.md)")
     args = parser.parse_args()
 
     agent = UniversalQAAgent(
@@ -36,6 +40,7 @@ def main() -> None:
         max_depth=args.max_depth,
         allow_destructive=args.allow_destructive,
         headless=args.headless,
+        enable_coverage_crosscheck=args.coverage_crosscheck,
     )
 
     results = asyncio.run(agent.run())
