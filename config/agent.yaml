@@ -124,3 +124,7 @@ cache:
   db_path: "~/.qa-agent/semantic_cache.lance"
   hit_threshold: 0.95
   guided_threshold: 0.50
+
+parallel:
+  use_worker_pool: false   # opt-in — see src/parallel/worker_pool.py (Sprint 15)
+  max_workers: 5           # hard-capped at 5 in WorkerConfig regardless of this value

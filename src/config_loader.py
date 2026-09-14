@@ -95,3 +95,19 @@ def get_semantic_cache_config() -> dict:
     """Return the cache section from config/agent.yaml as a dict."""
     config = get_config()
     return config.get("cache", {})
+
+
+def get_use_worker_pool() -> bool:
+    """Return True if the BrowserWorkerPool (Sprint 15) parallel executor is
+    enabled in config.
+
+    Defaults to False (opt-in) — see src/parallel/worker_pool.py.
+    """
+    config = get_config()
+    return bool(config.get("parallel", {}).get("use_worker_pool", False))
+
+
+def get_parallel_config() -> dict:
+    """Return the parallel section from config/agent.yaml as a dict."""
+    config = get_config()
+    return config.get("parallel", {})
