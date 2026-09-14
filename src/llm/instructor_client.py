@@ -110,6 +110,7 @@ class InstructorClient:
         prompt: str | list[dict[str, str]],
         response_model: type[T],
         temperature: float = 0.0,
+        max_tokens: int | None = None,
     ) -> T:
         """
         Generate a structured response and validate it against `response_model`.
@@ -119,6 +120,11 @@ class InstructorClient:
                     or a full messages list in OpenAI chat format.
             response_model: The Pydantic V2 model class to validate against.
             temperature: Generation temperature. Default 0.0 (deterministic).
+            max_tokens: Optional cap on generated tokens per attempt (forwarded
+                    as-is to every instructor retry). Default None preserves the
+                    prior unbounded behavior for existing callers; pass a value
+                    when a runaway generation (no natural stop token) would
+                    otherwise be unbounded — see GenerationConfig.num_predict.
 
         Returns:
             A validated instance of `response_model`.
@@ -141,6 +147,10 @@ class InstructorClient:
 
         start_ms = time.monotonic() * 1000
 
+        extra_kwargs: dict[str, int] = {}
+        if max_tokens is not None:
+            extra_kwargs["max_tokens"] = max_tokens
+
         async with self._semaphore:
             try:
                 result, completion = (
@@ -150,6 +160,7 @@ class InstructorClient:
                         response_model=response_model,
                         max_retries=self.max_retries,
                         temperature=temperature,
+                        **extra_kwargs,
                     )
                 )
 

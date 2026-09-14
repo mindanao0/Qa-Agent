@@ -14,7 +14,7 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict
 
 from src.codetest.ast_parser import FunctionSpec
-from src.llm.instructor_client import InstructorClient, StructuredGenerationError
+from src.llm.instructor_client import GenerationConfig, InstructorClient, StructuredGenerationError
 
 # Dedicated Semaphore(1) for the codetest module — stricter than the shared
 # _inference_semaphore(2) in adapter.py. Both are held during each Ollama call
@@ -22,6 +22,13 @@ from src.llm.instructor_client import InstructorClient, StructuredGenerationErro
 # risk since only one codetest call can enter at a time.
 _CODETEST_SEMAPHORE = asyncio.Semaphore(1)
 _CODER_MODEL = "qwen2.5-coder:7b-instruct-q4_K_M"
+
+# A GeneratedTest is one pytest function — comfortably under 2048 tokens.
+# Without this cap, a generation that never emits a natural stop token runs
+# unbounded (observed live: 1700+ tokens and still climbing on a CPU-only
+# CI runner), which is what turned the Sprint 6 CI gate's 20-minute job
+# timeout into a routine cancellation rather than a rare one.
+_MAX_TEST_TOKENS = GenerationConfig().num_predict
 
 _SYSTEM_PROMPT = (
     "You are a senior Python QA engineer writing pytest tests. "
@@ -727,6 +734,7 @@ class PytestGenerator:
                     prompt=messages,
                     response_model=GeneratedTest,
                     temperature=0.2,
+                    max_tokens=_MAX_TEST_TOKENS,
                 )
                 # Post-process: ensure the import line is present
                 test_code = _ensure_import(test.test_code, spec)
@@ -760,6 +768,7 @@ class PytestGenerator:
                     prompt=messages,
                     response_model=GeneratedTest,
                     temperature=0.2,
+                    max_tokens=_MAX_TEST_TOKENS,
                 )
                 test_code = _ensure_import(test.test_code, spec)
                 return test.model_copy(update={"func_id": spec.func_id, "test_code": test_code})
