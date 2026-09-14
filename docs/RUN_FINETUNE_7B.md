@@ -41,10 +41,20 @@
 — ไม่ต้องใส่ env อื่น (seq=384 เป็น default แล้ว) | จอดับไป TTY = ปกติ |
 โดนขัดกลางทาง (ไฟดับ/รีบูต) → สั่งคำสั่งเดิมซ้ำ เทรนต่อจาก checkpoint ล่าสุด
 
-**แนะนำก่อนวันจริง (~2 ชม.):** ซ้อม resume หนึ่งรอบ —
-`sudo MAX_STEPS=40 RESUME=auto bash scripts/finetune_headless.sh`
-เส้นทาง resume (โหลด optimizer/scheduler แล้วเทรนต่อจาก step 21) ยังไม่เคยถูกรันจริง
-รอบซ้อมนี้พิสูจน์มันครบ และ 20 step ที่ได้นับเข้าเป้าจริง (วันจริงเหลือ ~21–24 ชม.)
+**เช็ค 2 บรรทัดนี้ใน ~2 นาทีแรก (สำคัญที่สุด):** ตอน resume ต้องเห็น
+```
+[resume] restored 88 LoRA tensors from .../checkpoint-20 (adapter='default', ||lora_B||=6.1516)
+[resume] LR re-synced to the current schedule at step 20: 0.000e+00 → 1.994e-04
+```
+ไม่เห็น = โค้ดที่รันไม่มี fix → kill ทันที (`sudo systemctl stop qa-finetune`) แล้วเรียกคนดู
+จากนั้นที่ **step 21** บรรทัด dict ของ HF ต้องอ่านได้ `'learning_rate': 0.000199…`
+(ถ้าเป็น `0.0` หรือ `~5e-06` = LR ตายจริง → kill)
+
+> **ประวัติ (2026-07-14):** เส้นทาง resume เคย **พังจริง** — รัน 2 ครั้ง (21:39, 21:41) ตายใน 2 วินาที
+> ด้วย `ValueError: weight is on the meta device` (PEFT `load_adapter()` สั่ง `dispatch_model()` ใหม่
+> บนโมเดลที่ CPU-offload อยู่) แล้ว trap คืน GUI → เด้งไปหน้า login ทันที ดูเหมือน "รันแล้ว logout"
+> แก้แล้วใน `wsl2_trainer.py` (`restore_lora_adapter` + `resync_lr_after_resume`) และ**ทดสอบสดกับ
+> checkpoint-20 ตัวจริงผ่านแล้ว** — รอบซ้อม 40 steps ที่เคยแนะนำจึงไม่จำเป็นอีก
 
 **เทรนจบ:** `bash scripts/run_after_finetune.sh 6` (start ollama + register + eval ให้ครบ)
 หรือ A/B ด้วยโมเดลใหม่: `LLM_MODEL=qa-agent-finetuned bash scripts/run_after_finetune.sh 6`

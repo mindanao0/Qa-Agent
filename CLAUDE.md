@@ -86,13 +86,77 @@ Branch form-filling-crawler — form-filling crawler + 14-site eval loop + 7B fi
   user-level ollama BEFORE the VRAM gate (nohup'd ollama survives GUI teardown; previously
   killed only after the gate → a keep_alive'd model could abort the launch); launcher preflight
   fails closed when RESUME is set but train.jsonl is newer than the newest checkpoint
-  (ALLOW_DATASET_CHANGE=1 overrides). ONLY-REMAINING-UNTESTED: the live
-  trainer.train(resume_from_checkpoint=...) continuation — recommended ~2h rehearsal before
-  16/07: `sudo MAX_STEPS=40 RESUME=auto bash scripts/finetune_headless.sh` (proves it AND banks
-  20 real steps). DATASET FREEZE — USER DECISION 2026-07-12: no eval / no training-data
-  collection (run_multi_site.sh appends train.jsonl) until the 300-step run completes; the
-  preflight mtime guard enforces this. If any session is asked to run an eval before then,
-  surface this freeze first.
+  (ALLOW_DATASET_CHANGE=1 overrides). DATASET FREEZE — USER DECISION 2026-07-12: no eval / no
+  training-data collection (run_multi_site.sh appends train.jsonl) until the 300-step run
+  completes; the preflight mtime guard enforces this. If any session is asked to run an eval
+  before then, surface this freeze first.
+- FINAL PRE-RUN CHECK 2026-07-14 (run moved up from 16/07 → 14/07; all green, launched today):
+  REHEARSAL CANCELLED — the 2h/40-step resume rehearsal was recommended only to smoke out the
+  ONE silent failure mode, and that mode is now DISPROVED empirically. checkpoint-20 came from a
+  max_steps=20 run whose cosine had fully decayed (LR 4.89e-06 ≈ 0); the fear was that resuming
+  would keep that dead LR → 27h of rc=0, checkpoints, zero learning. Tested in the finetune venv:
+  HF builds a FRESH scheduler at num_training_steps=300, and LambdaLR.load_state_dict restores
+  only last_epoch/_step_count/base_lrs (a functools.partial lambda is NOT a types.FunctionType,
+  so its `keywords` survive) → LR at step 21 = 1.993e-04, bit-identical to an uninterrupted
+  300-step run. Every other resume risk (dataloader skip, optimizer/RNG restore) fails LOUD and
+  EARLY (<10 min), and SAVE_STEPS=20 caps the blast radius at 20 steps. LIVE CHECK AT STEP 21:
+  disable_tqdm=True makes HF attach PrinterCallback, which prints the raw logs dict — confirm
+  `learning_rate` ≈ 0.000199. If it reads ~5e-06, the scheduler did NOT rebuild → kill the run.
+  ⚠️ THAT LIVE CHECK WAS WRONG AND THE CANCELLED REHEARSAL WOULD HAVE CAUGHT IT — see the next
+  entry. The scheduler half of this analysis holds; everything it did NOT test (trainer.train()
+  on an actual checkpoint) was broken.
+  DATASET PARITY is deterministic, not lucky: prepare_dataset's only inputs are train.jsonl
+  (sha256 3903477…568ab, 3641 lines, unchanged) + GENERAL_EXAMPLES hardcoded at wsl2_trainer.py
+  :156 (git-clean at 5d45d73) → 3641 + 3641//10 = 4005 interleaved, matching the 12/07 audit
+  exactly. There is NO second data file, so the preflight's train.jsonl-only mtime guard is
+  sufficient. Freeze intact (the 14 dirty reports/multi_site files date to 25-27 Jun, pre-audit).
+  checkpoint-20 backed up to models/ckpt20_backup_20260714/ (save_total_limit=3 rotates the
+  original away at step 80; the backup name does not match ^checkpoint-\d+$ so get_last_checkpoint
+  ignores it). NEW RISK FOUND + MITIGATED: apt-daily-upgrade.timer fires inside the 27h window —
+  Allowed-Origins covers release + -security only (-updates is commented out) so the pending
+  linux-firmware-nvidia-graphics from resolute-updates will NOT auto-install, but a fresh nvidia
+  -security update mid-run would swap the driver and kill the CUDA context → timers stopped for
+  the run: `sudo systemctl stop apt-daily.timer apt-daily-upgrade.timer` (restore with `start`
+  after). Also observed: the stray NON-coder qwen2.5:7b-instruct-q4_K_M was the thing holding
+  4.1GB VRAM (a one-off load, no poller — it auto-unloaded and stayed unloaded); it is still
+  installed and still worth deleting.
+- RESUME WAS BROKEN — FOUND + FIXED 2026-07-14 (evidence: models/finetune_output/
+  headless_run_20260714_213919.log + _214056.log; proof of fix: resume_fix_verification_20260714.log).
+  Both real-run launches (21:39, 21:41) died 2 s in, rc=1, and the launcher's trap restored the GUI →
+  GDM login screen. User-visible symptom: "รันแล้วให้ login ใหม่" = two things stacked. The logout is
+  BY DESIGN (finetune_headless_inner.sh:37-40 isolates multi-user.target + stops gdm to free VRAM;
+  the trap re-isolates graphical.target on exit, so the desktop ALWAYS comes back at a fresh login).
+  It happened INSTANTLY because training crashed:
+  1) CRASH (fatal): Trainer._load_from_checkpoint resumes a PeftModel via PeftModel.load_adapter(),
+     which re-runs accelerate dispatch_model() whenever hf_device_map holds "cpu"/"disk" — with no
+     offload dir. The offloaded weights (embed_tokens, lm_head, layers 22-27) are on the meta device
+     → "ValueError: weight is on the meta device, we need a `value` to put in on 0". FIX:
+     restore_lora_adapter() + _OffloadSafeTrainer._load_from_checkpoint — loads
+     adapter_model.safetensors straight into the adapter via peft.set_peft_model_state_dict, no
+     dispatch. Fail-closed on unexpected keys AND on an all-zero lora_B (a silent no-op load would
+     train 27h from scratch while LOOKING like a resume). GPU-only unsloth path keeps the stock loader.
+  2) STALE LR (silent — the old LIVE CHECK above would have made the user kill a HEALTHY run): the
+     cosine scheduler DOES rebuild at num_training_steps=300 (the 12/07 analysis was right), but
+     optimizer.pt carries its own param-group lr, and checkpoint-20's schedule had decayed to EXACTLY
+     0.0 (scheduler.pt _last_lr=[0.0,0.0]; the 4.89e-06 quoted above is step 20's PRE-update LR =
+     lambda(19) — HF logs the LR *before* stepping the scheduler). So step 21 ran at lr=0.0 (a no-op
+     update) and PRINTED learning_rate: 0.0. FIX: resync_lr_after_resume() in
+     _load_optimizer_and_scheduler recomputes the LR from the fresh lambdas at last_epoch → step 21
+     now runs at 1.994138e-04, exactly what an uninterrupted 300-step run applies there. A
+     same-horizon resume recomputes the value it just restored (no-op, verified at step 100) → normal
+     mid-run resumes are unaffected.
+  VERIFIED LIVE 2026-07-14 22:07-22:13 on the REAL checkpoint-20 (copied into a throwaway output dir —
+  models/finetune_output untouched) with the exact real-run flags (--cpu-offload --gpu-budget-gib 2.9,
+  seq 384, --max-steps 300, --resume auto), GUI up: "[resume] restored 88 LoRA tensors
+  (||lora_B||=6.1516)" → "[resume] LR re-synced … 0.000e+00 → 1.994e-04" → dataset parity identical
+  (4005 → 3735, 93.3%) → step 21 trained (loss 2.0748, learning_rate 0.00019941379571543596, VRAM peak
+  5.2GB / free 0.78GB) → SIGINT → emergency adapter saved. loss+grad_norm were bit-identical across
+  both test runs → the RNG/dataloader restore is deterministic.
+  NEW LIVE CHECK (replaces the wrong one above): within ~2 min the two `[resume]` lines MUST appear,
+  and at step 21 `learning_rate` MUST read ≈1.99e-04. If it reads 0.0 or ~5e-06 → the running code
+  does not have the fix → kill. The 40-step rehearsal is no longer needed: this test WAS the rehearsal.
+  ALSO 2026-07-14: docs/RUN_FINETUNE_7B.md had been overwritten at 21:36 by unrelated `vela ask` output
+  (12 lines, Chinese text included) — restored from git (165 lines) and updated with the new check.
 Workflow: `PREFLIGHT=1 bash scripts/finetune_headless.sh` → `sudo MAX_STEPS=300 RESUME=auto bash
 scripts/finetune_headless.sh` (real run; survives interruption). Guide: docs/RUN_FINETUNE_7B.md.
 Next: 300-step run → scripts/eval_finetune.py (val.jsonl gates: train_loss<1.5, quality_gain≥0.05)
