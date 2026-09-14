@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from playwright.async_api import BrowserContext, Page
 
-from eval.coverage_dimensions import DimensionResult
+from src.universal_qa.coverage.dimensions import DimensionResult
 
 
 class JSCoverageSession:

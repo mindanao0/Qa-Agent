@@ -24,7 +24,7 @@ from urllib.parse import urlsplit
 
 from playwright.async_api import Page
 
-from eval.coverage_dimensions import DimensionResult
+from src.universal_qa.coverage.dimensions import DimensionResult
 from src.contractskill.sfg import BLOCKED_ACTION_PATTERNS
 
 # Collects accessible-name-ish label + a locator recipe for each currently

@@ -1,14 +1,15 @@
-"""Tests for eval.coverage_dimensions.merge_dimensions, eval.dim_static, and
-eval.dim_api_spec — the pure-logic and network-parsing pieces of the coverage
-cross-check (no live network, no browser, no Ollama; httpx.MockTransport
-stands in for the real site)."""
+"""Tests for src.universal_qa.coverage.dimensions.merge_dimensions,
+dim_static, and dim_api_spec — the pure-logic and network-parsing pieces of
+the coverage cross-check (no live network, no browser, no Ollama;
+httpx.MockTransport stands in for the real site)."""
 import httpx
 import pytest
 
-from eval.coverage_dimensions import DimensionResult, merge_dimensions
-from eval.dim_static import extract_routes_from_js, fetch_robots_disallow, fetch_sitemap_paths
-from eval.dim_api_spec import (
-    collect as api_spec_collect,
+from src.universal_qa.coverage.dimensions import DimensionResult, merge_dimensions
+from src.universal_qa.coverage.dim_static import (
+    extract_routes_from_js, fetch_robots_disallow, fetch_sitemap_paths,
+)
+from src.universal_qa.coverage.dim_api_spec import (
     parse_graphql_introspection,
     parse_openapi_paths,
     probe_graphql,
@@ -245,7 +246,7 @@ async def test_collect_neither_openapi_nor_graphql_present(monkeypatch):
 
     monkeypatch.setattr(httpx.AsyncClient, "__init__", fake_client_init)
 
-    from eval import dim_api_spec
+    from src.universal_qa.coverage import dim_api_spec
 
     result = await dim_api_spec.collect("target1", "https://example.com/")
     assert result.method == "api_spec"
@@ -275,7 +276,7 @@ async def test_collect_finds_both_openapi_and_graphql(monkeypatch):
 
     monkeypatch.setattr(httpx.AsyncClient, "__init__", fake_client_init)
 
-    from eval import dim_api_spec
+    from src.universal_qa.coverage import dim_api_spec
 
     result = await dim_api_spec.collect("target1", "https://example.com/")
     assert result.method == "api_spec"

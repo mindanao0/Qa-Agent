@@ -1,6 +1,7 @@
 # src/universal_qa/agent.py
 from __future__ import annotations
 
+import json
 import pathlib
 from urllib.parse import urlparse
 
@@ -34,11 +35,13 @@ class UniversalQAAgent:
         allow_destructive: bool = False,
         headless: bool = True,
         output_dir: pathlib.Path | None = None,
+        enable_coverage_crosscheck: bool = False,
     ) -> None:
         self._url = url
         self._max_pages = max_pages
         self._headless = headless
         self._output_dir = output_dir or pathlib.Path("reports")
+        self._enable_coverage_crosscheck = enable_coverage_crosscheck
         self._auth = AuthManager(username=username, password=password)
         self._discovery = SiteDiscovery(max_pages=max_pages)
         self._planner = UniversalTestPlanner()
@@ -96,6 +99,9 @@ class UniversalQAAgent:
                 logger.info(
                     f"  Explored {len(nav_map.pages)} pages, {len(nav_map.flows)} flows"
                 )
+
+                if self._enable_coverage_crosscheck:
+                    await self._run_coverage_crosscheck(discover_url)
 
                 # Supplement nav_map with Phase 2 pages not reached by Phase 3
                 _explored_urls = {p.url.split("?")[0].split("#")[0] for p in nav_map.pages}
@@ -160,6 +166,36 @@ class UniversalQAAgent:
 
             finally:
                 await browser.close()
+
+    async def _run_coverage_crosscheck(self, seed_url: str) -> None:
+        """Optional post-exploration stage: cross-check the SFG crawl against
+        8 independent coverage dimensions (static-declared, JS execution,
+        viewport A/B, session-state A/B, keyboard-walk, monkey-walk, declared
+        API surface) and write the merged report. Runs its own isolated
+        browser session(s) — never shares `page` with the main flow — so a
+        failure here never breaks the run. See eval/FINDINGS_explore.md.
+        """
+        from src.universal_qa.coverage.crosscheck import run_full_crosscheck
+
+        target_id = urlparse(seed_url).netloc or seed_url
+        try:
+            report = await run_full_crosscheck(
+                target_id=target_id, seed_url=seed_url,
+                headless=self._headless,
+                safe_mode=not self._explorer_cfg.allow_destructive,
+            )
+        except Exception as exc:
+            logger.warning(f"UniversalQAAgent: coverage crosscheck failed — {exc!r}")
+            return
+
+        self._output_dir.mkdir(parents=True, exist_ok=True)
+        out_path = self._output_dir / "coverage_crosscheck.json"
+        out_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        logger.info(
+            f"  Coverage crosscheck: {report.get('seen_by_all_count', '?')}/"
+            f"{report.get('total_distinct_paths', '?')} paths seen by every dimension "
+            f"→ {out_path}"
+        )
 
 
 __all__ = ["UniversalQAAgent"]

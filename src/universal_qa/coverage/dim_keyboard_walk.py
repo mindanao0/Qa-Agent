@@ -52,7 +52,7 @@ from urllib.parse import urlsplit
 from playwright.async_api import Page
 
 from src.contractskill.sfg import BLOCKED_ACTION_PATTERNS
-from eval.coverage_dimensions import DimensionResult
+from src.universal_qa.coverage.dimensions import DimensionResult
 
 _ACTIVE_ELEMENT_JS = """() => {
   const el = document.activeElement;

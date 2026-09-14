@@ -22,7 +22,7 @@ from playwright.async_api import async_playwright
 
 from src.contractskill.sfg import SFGStore
 from src.universal_qa.explorer.sfg_traversal import SFGTraversalExplorer
-from eval.coverage_dimensions import DimensionResult
+from src.universal_qa.coverage.dimensions import DimensionResult
 
 _UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"
 
