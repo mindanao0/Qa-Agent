@@ -15,7 +15,7 @@ from typing import Any
 from loguru import logger
 from playwright.async_api import Page
 
-from src.agents.observer_driver.state import DriverAction
+from src.agents.observer_driver.state import DriverAction, DriverFeedback
 from src.agents.observer_driver.trace_bus import TraceBus, TraceEvent
 from src.llm.adapter import OllamaAdapter
 
@@ -56,9 +56,44 @@ async def capture_axtree(page: Page, step: int) -> Path:
     return snapshot_path
 
 
-def _build_prompt(ax_yaml: str, step: int, url: str) -> str:
-    """Compose the structured prompt for the Driver LLM."""
+def _format_hint_block(hint: DriverFeedback | None) -> str:
+    """Render the advisory Observer-signal block, or ``""`` when there is no hint.
+
+    The block is ADVISORY ONLY and is inserted *before* the JSON action contract;
+    its trailing blank line keeps everything from ``"Reply with a SINGLE JSON
+    object"`` onward byte-identical to the no-hint prompt, so a hint can never
+    perturb the action schema the Driver must produce.
+    """
+    if hint is None:
+        return ""
+    lines = [
+        f"PRIOR AUDIT SIGNALS (advisory — from step {hint.from_step}, "
+        f"top severity {hint.top_severity}):"
+    ]
+    for i, directive in enumerate(hint.directives, start=1):
+        lines.append(f"  {i}. {directive}")
+    lines.append(
+        "These are advisory hints from parallel auditors. Never fabricate a target "
+        "that is not present in the accessibility tree; if a hint references "
+        "something not in the tree, ignore it."
+    )
+    return "\n".join(lines) + "\n\n"
+
+
+def _build_prompt(
+    ax_yaml: str,
+    step: int,
+    url: str,
+    hint: DriverFeedback | None = None,
+) -> str:
+    """Compose the structured prompt for the Driver LLM.
+
+    When *hint* is provided, a clearly-delimited advisory block of prior Observer
+    audit signals is inserted between the accessibility tree and the JSON action
+    contract. Defaults to ``None`` → backward-compatible with existing callers.
+    """
     trimmed = ax_yaml[:AX_SNAPSHOT_MAX_BYTES]
+    advisory = _format_hint_block(hint)
     return (
         "You are the DRIVER of a browser automation agent. Pick exactly ONE "
         "next action to make progress on the page.\n"
@@ -68,6 +103,7 @@ def _build_prompt(ax_yaml: str, step: int, url: str) -> str:
         "---\n"
         f"{trimmed}\n"
         "---\n\n"
+        f"{advisory}"
         "Reply with a SINGLE JSON object — no prose, no markdown — using "
         "exactly these keys:\n"
         '  "action_type": one of "click", "fill", "navigate", "assert", "noop"\n'
@@ -133,10 +169,15 @@ async def plan_action(
     url: str,
     ollama_url: str = OLLAMA_URL,
     model: str = DRIVER_MODEL,
+    hint: DriverFeedback | None = None,
 ) -> DriverAction:
-    """Ask Ollama for the next :class:`DriverAction` given the saved AXTree."""
+    """Ask Ollama for the next :class:`DriverAction` given the saved AXTree.
+
+    *hint* (default ``None``) carries the distilled Observer feedback from the
+    previous step; when present it is rendered into the prompt as an advisory block.
+    """
     ax_yaml = ax_path.read_text(encoding="utf-8") if ax_path.exists() else ""
-    prompt = _build_prompt(ax_yaml, step, url)
+    prompt = _build_prompt(ax_yaml, step, url, hint)
 
     # Route through OllamaAdapter (holds _inference_semaphore + VRAM guard) instead
     # of a direct aiohttp call to :11434. JSON mode is preserved via response_format.
