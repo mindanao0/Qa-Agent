@@ -5,6 +5,7 @@ import re
 import time
 from urllib.parse import urljoin, urlparse
 
+from loguru import logger
 from playwright.async_api import Page
 
 from src.agents.observer_driver.observers.accessibility_observer import (
@@ -15,6 +16,7 @@ from src.contractskill.sfg import SFGStore
 from src.explorer.executor import HypothesisExecutor
 from src.explorer.hypothesis import TestHypothesis
 from src.llm.instructor_client import InstructorClient
+from src.parallel.worker_pool import BrowserWorkerPool, WorkerConfig
 from src.universal_qa.models import StepTrace, TestCase, TestResult
 from src.universal_qa.reporters.terminal import TerminalReporter
 
@@ -185,6 +187,22 @@ def _map_exception(exc: Exception) -> str:
     return msg[:200]
 
 
+class _PooledTestCase:
+    """Thin id-bearing wrapper so a ``TestCase`` can flow through
+    ``BrowserWorkerPool``, which was built against ``TestHypothesis`` and
+    only ever reads a task's ``.hypothesis_id`` (for its own tracing/result
+    bookkeeping — see src/parallel/worker_pool.py). Everything else about the
+    task stays opaque to the pool; the real ``TestCase`` rides along on
+    ``.test_case`` for the runner's own task_runner closure to dispatch.
+    """
+
+    __slots__ = ("hypothesis_id", "test_case")
+
+    def __init__(self, test_case: TestCase) -> None:
+        self.hypothesis_id = test_case.id
+        self.test_case = test_case
+
+
 class UniversalTestRunner:
     """Executes a list of TestCase objects using Playwright.
 
@@ -199,21 +217,97 @@ class UniversalTestRunner:
         sfg_store: SFGStore | None = None,
         screenshot_dir: pathlib.Path | None = None,
         terminal_reporter: TerminalReporter | None = None,
+        use_worker_pool: bool = False,
+        max_workers: int = 5,
     ) -> None:
         instructor = InstructorClient()
         self._hyp_executor = HypothesisExecutor(instructor, sfg_store)
         self._screenshot_dir = screenshot_dir
         self._terminal = terminal_reporter or TerminalReporter()
+        # Sprint 15 BrowserWorkerPool wiring — opt-in, default off (see
+        # config/agent.yaml `parallel.use_worker_pool` / get_use_worker_pool()).
+        # Parallelism is browser-actions-only: _dispatch()'s only LLM-touching
+        # path (HypothesisExecutor, shared across workers) reaches Ollama
+        # through src.llm.adapter._inference_semaphore (global Semaphore(1)),
+        # so this never risks concurrent LLM inference on the 6GB-VRAM box.
+        self._use_worker_pool = use_worker_pool
+        self._max_workers = max_workers
 
     async def run(
         self, test_cases: list[TestCase], page: Page
     ) -> list[TestResult]:
+        if getattr(self, "_use_worker_pool", False) and test_cases:
+            return await self._run_parallel(test_cases, page)
         results: list[TestResult] = []
         for tc in test_cases:
             result = await self._dispatch(tc, page)
             self._terminal.report_one(result)
             results.append(result)
         return results
+
+    async def _run_parallel(
+        self, test_cases: list[TestCase], page: Page
+    ) -> list[TestResult]:
+        """Fan out ``test_cases`` across N isolated BrowserContext workers via
+        BrowserWorkerPool.run_parallel(), instead of the sequential loop.
+
+        Falls back to the sequential loop if the given ``page`` has no
+        reachable ``Browser`` handle (e.g. some test doubles) — fan-out needs
+        a real Browser to open new contexts on.
+        """
+        browser = getattr(page.context, "browser", None)
+        if browser is None:
+            logger.warning(
+                "UniversalTestRunner: worker pool enabled but page.context.browser "
+                "is unavailable — falling back to sequential execution"
+            )
+            results: list[TestResult] = []
+            for tc in test_cases:
+                result = await self._dispatch(tc, page)
+                self._terminal.report_one(result)
+                results.append(result)
+            return results
+
+        # Seed every worker's fresh context with the caller's session (cookies
+        # + localStorage) so parallel fan-out doesn't drop an existing login —
+        # UniversalQAAgent authenticates `page` once in Phase 1, before any
+        # test cases run.
+        try:
+            storage_state = await page.context.storage_state()
+        except Exception as exc:
+            logger.warning(f"UniversalTestRunner: storage_state() failed: {exc!r}")
+            storage_state = None
+
+        results_by_id: dict[str, TestResult] = {}
+
+        async def _task_runner(pooled: _PooledTestCase, worker_page: Page, worker_id: str) -> bool:
+            result = await self._dispatch(pooled.test_case, worker_page)
+            results_by_id[pooled.test_case.id] = result
+            return result.passed
+
+        pool = BrowserWorkerPool(
+            WorkerConfig(n_workers=self._max_workers, max_workers=self._max_workers),
+            task_runner=_task_runner,
+        )
+        pooled_tasks = [_PooledTestCase(tc) for tc in test_cases]
+        await pool.run_parallel(pooled_tasks, browser, storage_state=storage_state)
+
+        # Reassemble in the caller's original order (the pool returns
+        # worker-major order) and report each result, same as the sequential
+        # path — only the execution itself ran concurrently.
+        ordered: list[TestResult] = []
+        for tc in test_cases:
+            result = results_by_id.get(tc.id)
+            if result is None:
+                result = TestResult(
+                    test_case=tc,
+                    passed=False,
+                    failure_reason="worker pool produced no result for this test case",
+                    duration_ms=0,
+                )
+            self._terminal.report_one(result)
+            ordered.append(result)
+        return ordered
 
     async def _dispatch(self, tc: TestCase, page: Page) -> TestResult:
         try:

@@ -10,10 +10,12 @@ from playwright.async_api import async_playwright
 
 from src.cache.semantic_cache import SemanticCache
 from src.config_loader import (
+    get_parallel_config,
     get_race_config,
     get_semantic_cache_config,
     get_use_race_testing,
     get_use_semantic_cache,
+    get_use_worker_pool,
 )
 from src.universal_qa.auth_manager import AuthManager
 from src.universal_qa.explorer.nav_map import ExploredPage, NavigationMap
@@ -182,10 +184,13 @@ class UniversalQAAgent:
                 # Phase 4: Execute + Report
                 logger.info("Phase 4: executing test cases")
                 screenshot_dir = self._output_dir / "screenshots"
+                _parallel_cfg = get_parallel_config()
                 runner = UniversalTestRunner(
                     sfg_store=sfg_store,
                     screenshot_dir=screenshot_dir,
                     terminal_reporter=self._terminal,
+                    use_worker_pool=get_use_worker_pool(),
+                    max_workers=int(_parallel_cfg.get("max_workers", 5)),
                 )
                 results = await runner.run(test_cases, page)
 

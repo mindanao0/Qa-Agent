@@ -125,6 +125,10 @@ cache:
   hit_threshold: 0.95
   guided_threshold: 0.50
 
+parallel:
+  use_worker_pool: false   # opt-in — see src/parallel/worker_pool.py (Sprint 15)
+  max_workers: 5           # hard-capped at 5 in WorkerConfig regardless of this value
+
 race:
   enable_race_testing: false          # opt-in — see src/race/swarm.py (Sprint 10/12) +
                                        # src/universal_qa/race_check.py
