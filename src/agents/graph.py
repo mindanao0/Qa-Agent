@@ -30,6 +30,7 @@ from typing import Annotated, Any, Literal, TYPE_CHECKING, TypedDict
 from loguru import logger
 from langgraph.graph import END, StateGraph
 
+from src.cache.semantic_cache import SemanticCache
 from src.llm.adapter import OllamaAdapter
 from src.llm.structured import PlaywrightScript, TestPlan
 from src.browser.manager import BrowserManager
@@ -38,6 +39,8 @@ from src.config_loader import (
     get_use_grounder,
     get_context_budget_tokens,
     get_bft_enabled,
+    get_semantic_cache_config,
+    get_use_semantic_cache,
 )
 from src.agents.bft_generator import bft_generator_node as _bft_generator_node
 from src.routing.adaptive_router import AdaptiveRouter
@@ -139,7 +142,15 @@ def build_graph(
         episodic_store=episodic_store,
         contract_skill_store=contract_skill_store,
     )
-    generator_agent = GeneratorAgent(adapter=adapter, retriever=retriever)
+    _semantic_cache: SemanticCache | None = None
+    if get_use_semantic_cache():
+        _cache_cfg = get_semantic_cache_config()
+        _semantic_cache = SemanticCache(
+            db_path=Path(_cache_cfg.get("db_path", "~/.qa-agent/semantic_cache.lance")).expanduser(),
+            hit_threshold=float(_cache_cfg.get("hit_threshold", 0.95)),
+            guided_threshold=float(_cache_cfg.get("guided_threshold", 0.50)),
+        )
+    generator_agent = GeneratorAgent(adapter=adapter, retriever=retriever, cache=_semantic_cache)
 
     _bm = browser_manager  # may be None for pure generative workflows
 

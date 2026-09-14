@@ -80,3 +80,18 @@ def get_exploration_config() -> dict:
     """Return the exploration section from config/agent.yaml as a dict."""
     config = get_config()
     return config.get("exploration", {})
+
+
+def get_use_semantic_cache() -> bool:
+    """Return True if the semantic cache (Priority 3) is enabled in config.
+
+    Defaults to False (opt-in) — see src/cache/semantic_cache.py.
+    """
+    config = get_config()
+    return bool(config.get("cache", {}).get("use_semantic_cache", False))
+
+
+def get_semantic_cache_config() -> dict:
+    """Return the cache section from config/agent.yaml as a dict."""
+    config = get_config()
+    return config.get("cache", {})

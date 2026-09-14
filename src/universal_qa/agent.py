@@ -8,6 +8,8 @@ from urllib.parse import urlparse
 from loguru import logger
 from playwright.async_api import async_playwright
 
+from src.cache.semantic_cache import SemanticCache
+from src.config_loader import get_semantic_cache_config, get_use_semantic_cache
 from src.universal_qa.auth_manager import AuthManager
 from src.universal_qa.explorer.nav_map import ExploredPage, NavigationMap
 from src.universal_qa.models import TestResult
@@ -44,7 +46,17 @@ class UniversalQAAgent:
         self._enable_coverage_crosscheck = enable_coverage_crosscheck
         self._auth = AuthManager(username=username, password=password)
         self._discovery = SiteDiscovery(max_pages=max_pages)
-        self._planner = UniversalTestPlanner()
+        _semantic_cache: SemanticCache | None = None
+        if get_use_semantic_cache():
+            _cache_cfg = get_semantic_cache_config()
+            _semantic_cache = SemanticCache(
+                db_path=pathlib.Path(
+                    _cache_cfg.get("db_path", "~/.qa-agent/semantic_cache.lance")
+                ).expanduser(),
+                hit_threshold=float(_cache_cfg.get("hit_threshold", 0.95)),
+                guided_threshold=float(_cache_cfg.get("guided_threshold", 0.50)),
+            )
+        self._planner = UniversalTestPlanner(cache=_semantic_cache)
         self._terminal = TerminalReporter()
         from src.universal_qa.explorer.nav_map import ExplorerConfig
         self._explorer_cfg = ExplorerConfig(

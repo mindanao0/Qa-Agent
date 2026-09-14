@@ -6,6 +6,7 @@ from typing import Any
 
 from loguru import logger
 
+from src.cache.semantic_cache import SemanticCache
 from src.config_loader import get_structured_output_engine, get_use_grounder
 from src.llm.adapter import OllamaAdapter
 from src.llm.instructor_client import InstructorClient, StructuredGenerationError
@@ -117,6 +118,7 @@ class GeneratorAgent:
         adapter: OllamaAdapter,
         retriever: HybridRetriever | None = None,
         instructor_client: InstructorClient | None = None,
+        cache: SemanticCache | None = None,
     ) -> None:
         self.adapter = adapter
         self.retriever = retriever
@@ -129,6 +131,11 @@ class GeneratorAgent:
             model=adapter.model,
             max_retries=1,
         )
+        # Opt-in semantic cache (config: cache.use_semantic_cache) — an
+        # uninitialized instance is fine here, .initialize() runs lazily on
+        # first generate() call so __init__ stays synchronous.
+        self._cache = cache
+        self._cache_ready = False
 
     # ── Two-pass generation ────────────────────────────────────────────────────
 
@@ -275,6 +282,27 @@ class GeneratorAgent:
         last_error: Exception | None = None
         engine = get_structured_output_engine()
 
+        cache_query: str | None = None
+        if self._cache is not None:
+            if not self._cache_ready:
+                await self._cache.initialize()
+                self._cache_ready = True
+            cache_query = f"URL: {url}\n{plan}"
+            lookup = await self._cache.lookup(cache_query)
+            if lookup.route == "CACHE_HIT" and lookup.cached_entry is not None:
+                logger.info(f"GeneratorAgent: cache hit (score={lookup.score:.4f}) — skipping LLM")
+                return PlaywrightScript.model_validate_json(lookup.cached_entry.playwright_code)
+            if lookup.route == "GUIDED" and lookup.cached_entry is not None:
+                try:
+                    guided = PlaywrightScript.model_validate_json(lookup.cached_entry.playwright_code)
+                    plan = (
+                        "Reference example from a similar prior test plan "
+                        "(style/format guide only — adapt to this plan):\n"
+                        f"{guided.code}\n\n{plan}"
+                    )
+                except Exception as exc:
+                    logger.debug(f"GeneratorAgent: guided-hint decode failed, ignoring: {exc!r}")
+
         for attempt in range(1, _MAX_RETRIES + 1):
             try:
                 if engine == "instructor":
@@ -282,6 +310,7 @@ class GeneratorAgent:
                     script = await self._generate_via_instructor(plan, url)
                     self._validate_python(script.code)
                     logger.info("GeneratorAgent: valid Python generated (instructor)")
+                    await self._cache_result(cache_query, script)
                     return script
                 else:
                     logger.info(
@@ -291,11 +320,13 @@ class GeneratorAgent:
                     code = await self._get_code(plan, url, reasoning)
                     self._validate_python(code)
                     logger.info("GeneratorAgent: valid Python generated (legacy)")
-                    return PlaywrightScript(
+                    script = PlaywrightScript(
                         reasoning=reasoning,
                         code=code,
                         locators_used=self._extract_locators(code),
                     )
+                    await self._cache_result(cache_query, script)
+                    return script
             except StructuredGenerationError as exc:
                 logger.warning(
                     f"GeneratorAgent attempt {attempt}/{_MAX_RETRIES} "
@@ -317,6 +348,20 @@ class GeneratorAgent:
             f"GeneratorAgent: failed after {_MAX_RETRIES} attempts. "
             f"Last error: {last_error}"
         )
+
+    async def _cache_result(self, cache_query: str | None, script: PlaywrightScript) -> None:
+        """Persist a successful generation for reuse. No-op when caching is off."""
+        if self._cache is None or cache_query is None:
+            return
+        try:
+            await self._cache.upsert(
+                query=cache_query,
+                playwright_code=script.model_dump_json(),
+                metadata={},
+            )
+        except Exception as exc:
+            # Caching is a performance optimization, never a correctness gate.
+            logger.warning(f"GeneratorAgent: cache upsert failed (non-fatal): {exc!r}")
 
     # ── Legacy helper kept for backward compatibility ──────────────────────────
 

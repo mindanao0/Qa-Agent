@@ -118,3 +118,9 @@ exploration:
   max_pages: 20
   max_depth: 4
   max_outgoing_per_node: 10
+
+cache:
+  use_semantic_cache: false   # opt-in — see src/cache/semantic_cache.py (Priority 3 spec)
+  db_path: "~/.qa-agent/semantic_cache.lance"
+  hit_threshold: 0.95
+  guided_threshold: 0.50
