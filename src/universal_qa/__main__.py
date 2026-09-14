@@ -29,6 +29,15 @@ def main() -> None:
                         help="After exploration, cross-check the SFG crawl against 8 "
                              "independent coverage dimensions and write "
                              "<output-dir>/coverage_crosscheck.json (see eval/FINDINGS_explore.md)")
+    parser.add_argument("--race-testing", action="store_true", default=None,
+                        help="After exploration, run concurrent read-only GET race scenarios "
+                             "against discovered pages and write <output-dir>/race_report.json "
+                             "(see src/universal_qa/race_check.py). Default: config/agent.yaml "
+                             "race.enable_race_testing (False).")
+    parser.add_argument("--allow-destructive-race-scenarios", action="store_true", default=None,
+                        help="Reserved: no safe generic destructive-scenario synthesis exists "
+                             "yet for arbitrary sites, so this currently has no effect beyond a "
+                             "log line — see src/universal_qa/race_check.py.")
     args = parser.parse_args()
 
     agent = UniversalQAAgent(
@@ -41,6 +50,8 @@ def main() -> None:
         allow_destructive=args.allow_destructive,
         headless=args.headless,
         enable_coverage_crosscheck=args.coverage_crosscheck,
+        enable_race_testing=args.race_testing,
+        allow_destructive_race_scenarios=args.allow_destructive_race_scenarios,
     )
 
     results = asyncio.run(agent.run())
